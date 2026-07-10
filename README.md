@@ -135,3 +135,7 @@ cleanshot-x-automation/
 ## Research sources
 
 The CleanShot X URL scheme API is documented by CleanShot at `https://cleanshot.com/docs-api`. Claude Code and Codex both support Agent Skills-style folders with a `SKILL.md` entrypoint. See the references directory for summarized command coverage and operational caveats.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
