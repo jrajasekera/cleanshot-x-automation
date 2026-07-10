@@ -1,6 +1,10 @@
 ---
 name: cleanshot-x-automation
 description: Control CleanShot X on a local macOS desktop via its URL scheme. Use for taking fullscreen/area/window screenshots, saving captures to files through a clipboard helper, opening screen recording mode, running OCR, annotating/pinning images, adding Quick Access Overlay items, opening history/settings, and toggling desktop icons when the user wants an agent to capture or inspect the Mac screen with CleanShot X.
+compatibility: Requires macOS with a graphical login session and CleanShot X installed, with its URL scheme API enabled (Settings → Advanced → API → Allow Applications to control CleanShot). Uses /usr/bin open, osascript, pbpaste, and sips. Does not work headless, over SSH without a GUI, or in cloud sandboxes.
+metadata:
+  version: "1.0.0"
+  source: https://github.com/jrajasekera/cleanshot-x-automation
 ---
 
 # CleanShot X Automation

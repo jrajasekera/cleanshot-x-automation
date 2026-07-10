@@ -13,57 +13,63 @@ It provides:
 
 - macOS with a logged-in graphical desktop session.
 - CleanShot X installed.
-- CleanShot X API enabled: **CleanShot X Settings → Advanced → API → Allow Applications to control CleanShot**.
+- CleanShot X URL scheme API enabled (recommended): **CleanShot X Settings → Advanced → API → Allow Applications to control CleanShot**. Some CleanShot versions accept `cleanshot://` commands even with this off, but enabling it is the supported configuration.
 - macOS permissions for CleanShot X: Screen Recording, and any microphone/camera/system audio permissions needed for recording.
 - For the helper scripts: `/usr/bin/open`, `/usr/bin/osascript`, `/usr/bin/pbpaste`, and `/usr/bin/sips` are used. These are standard macOS tools.
 
 This does not work in a headless or cloud-only agent environment. The agent must be able to run shell commands on the user’s Mac.
 
-## Install for Claude Code
+## Installing the skill
 
-From the unzipped package root:
+A skill is just a directory — there is no special installer format in the Agent
+Skills spec. To install it, place this folder where your agent scans for skills.
+The directory **must** be named `cleanshot-x-automation` so it matches the `name`
+field in `SKILL.md`.
 
-```bash
-./install.sh --claude
-```
+### Standard install (any agent)
 
-Manual equivalent:
+Clone (or copy) this repo directly into a skills directory:
 
-```bash
-mkdir -p ~/.claude/skills
-cp -R cleanshot-x-automation ~/.claude/skills/cleanshot-x-automation
-chmod +x ~/.claude/skills/cleanshot-x-automation/scripts/cleanshotx
-```
-
-Claude Code can then invoke the skill automatically when a task matches the description, or directly with `/cleanshot-x-automation`.
-
-## Install for Codex
-
-From the unzipped package root:
+| Agent | User-level location |
+|-------|---------------------|
+| Codex, VS Code Copilot, and other Agent Skills clients | `~/.agents/skills/cleanshot-x-automation` |
+| Claude Code | `~/.claude/skills/cleanshot-x-automation` |
 
 ```bash
-./install.sh --codex
+# Cross-client (Codex, VS Code, ...)
+git clone https://github.com/jrajasekera/cleanshot-x-automation.git \
+  ~/.agents/skills/cleanshot-x-automation
+
+# Claude Code
+git clone https://github.com/jrajasekera/cleanshot-x-automation.git \
+  ~/.claude/skills/cleanshot-x-automation
 ```
 
-Manual equivalent:
+For a **project-scoped** install (shared through a repo), place the folder under
+the repo root in `.agents/skills/cleanshot-x-automation/` (cross-client) or
+`.claude/skills/cleanshot-x-automation/` (Claude Code) instead of your home
+directory.
+
+Once installed, agents load the skill automatically when a task matches its
+description. Claude Code also lets you invoke it explicitly with
+`/cleanshot-x-automation`.
+
+### Optional: the `install.sh` helper
+
+If you already have the repo checked out, `install.sh` is a convenience wrapper
+that copies or symlinks it into the right place and guarantees the directory
+name. It is not required — the clone commands above do the same thing.
 
 ```bash
-mkdir -p ~/.agents/skills
-cp -R cleanshot-x-automation ~/.agents/skills/cleanshot-x-automation
-chmod +x ~/.agents/skills/cleanshot-x-automation/scripts/cleanshotx
+./install.sh --both          # copy into ~/.agents/skills and ~/.claude/skills
+./install.sh --link --both   # symlink instead; git pull then propagates updates
+./install.sh --agents        # cross-client only (~/.agents/skills)
+./install.sh --claude        # Claude Code only (~/.claude/skills)
+./install.sh --project .     # into ./.agents/skills for the current repo
 ```
 
-For a repository-scoped install, copy the folder into:
-
-```text
-<repo>/.agents/skills/cleanshot-x-automation/
-```
-
-## Install for both
-
-```bash
-./install.sh --both
-```
+`--link` is handy for development: the installed skill points back at your
+checkout, so `git pull` updates it in place.
 
 ## Smoke test
 
@@ -110,9 +116,9 @@ Avoid `action=upload` unless the user explicitly wants to upload to CleanShot Cl
 
 ```text
 cleanshot-x-automation/
-├── SKILL.md
+├── SKILL.md          # required: frontmatter metadata + agent instructions
 ├── README.md
-├── install.sh
+├── install.sh        # optional convenience installer
 ├── scripts/
 │   ├── cleanshotx
 │   └── clipboard-image-to-file.applescript
@@ -120,12 +126,10 @@ cleanshot-x-automation/
 │   ├── cleanshot-url-api.md
 │   ├── agent-workflows.md
 │   └── limitations-and-troubleshooting.md
-├── examples/
-│   ├── AGENTS.md
-│   ├── CLAUDE.md
-│   └── prompts.md
-└── agents/
-    └── openai.yaml
+└── examples/
+    ├── AGENTS.md
+    ├── CLAUDE.md
+    └── prompts.md
 ```
 
 ## Research sources

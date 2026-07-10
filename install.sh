@@ -1,44 +1,77 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Optional convenience installer for the cleanshot-x-automation Agent Skill.
+#
+# A skill is just a directory. "Installing" means placing this directory where
+# your agent scans for skills. You do not need this script -- you can also just
+# clone or copy the folder into place, e.g.:
+#
+#   git clone <url> ~/.agents/skills/cleanshot-x-automation    # cross-client
+#   git clone <url> ~/.claude/skills/cleanshot-x-automation    # Claude Code
+#
+# This script does the same thing, gets the directory name right, and can
+# symlink instead of copy so `git pull` updates propagate.
+
 SKILL_NAME="cleanshot-x-automation"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODE="copy"
 
 usage() {
   cat <<USAGE
-Install $SKILL_NAME for local agent runtimes.
+Install the $SKILL_NAME skill for local agent runtimes.
 
 Usage:
-  ./install.sh --claude     Install to ~/.claude/skills/$SKILL_NAME
-  ./install.sh --codex      Install to ~/.agents/skills/$SKILL_NAME
-  ./install.sh --both       Install to both locations
-  ./install.sh --project-codex /path/to/repo
-                            Install to /path/to/repo/.agents/skills/$SKILL_NAME
-  ./install.sh --project-claude /path/to/repo
-                            Install to /path/to/repo/.claude/skills/$SKILL_NAME
+  ./install.sh [--link] TARGET [TARGET ...]
 
+Targets:
+  --agents                ~/.agents/skills/$SKILL_NAME   (cross-client: Codex, VS Code, etc.)
+  --codex                 alias for --agents
+  --claude                ~/.claude/skills/$SKILL_NAME   (Claude Code)
+  --both                  install to both user-level locations above
+  --project PATH          PATH/.agents/skills/$SKILL_NAME (cross-client, project-scoped)
+  --project-claude PATH   PATH/.claude/skills/$SKILL_NAME (Claude Code, project-scoped)
+
+Options:
+  --link                  symlink the skill instead of copying (recommended for
+                          git checkouts, so updates propagate on git pull)
+  -h, --help              show this help
+
+Examples:
+  ./install.sh --agents            # cross-client user install (copy)
+  ./install.sh --link --both       # symlink into both ~/.agents and ~/.claude
+  ./install.sh --project .         # install into ./.agents/skills for this repo
 USAGE
 }
 
-copy_skill() {
+install_to() {
   local dest="$1"
   local parent
   parent="$(dirname "$dest")"
   mkdir -p "$parent"
 
-  if [[ "$SCRIPT_DIR" == "$dest" ]]; then
+  if [[ "$SRC_DIR" == "$dest" ]]; then
     echo "Already installed at $dest"
     return 0
   fi
 
   rm -rf "$dest"
-  if command -v ditto >/dev/null 2>&1; then
-    ditto "$SCRIPT_DIR" "$dest"
-  else
-    cp -R "$SCRIPT_DIR" "$dest"
+
+  if [[ "$MODE" == "link" ]]; then
+    ln -s "$SRC_DIR" "$dest"
+    echo "Linked  $dest -> $SRC_DIR"
+    return 0
   fi
-  chmod +x "$dest/scripts/cleanshotx" "$dest/install.sh" 2>/dev/null || true
-  echo "Installed to $dest"
+
+  # Copy the skill, excluding VCS and editor/tooling metadata.
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --exclude '.git' --exclude '.serena' --exclude '.DS_Store' "$SRC_DIR/" "$dest/"
+  else
+    cp -R "$SRC_DIR" "$dest"
+    rm -rf "$dest/.git" "$dest/.serena"
+  fi
+  chmod +x "$dest/scripts/cleanshotx" 2>/dev/null || true
+  echo "Copied  $dest"
 }
 
 if [[ $# -eq 0 ]]; then
@@ -46,34 +79,47 @@ if [[ $# -eq 0 ]]; then
   exit 2
 fi
 
+# First pass: pull out global options so they can appear anywhere.
+args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --claude)
-      copy_skill "$HOME/.claude/skills/$SKILL_NAME"
+    --link) MODE="link"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]+"${args[@]}"}"
+
+if [[ $# -eq 0 ]]; then
+  echo "No target specified." >&2
+  usage >&2
+  exit 2
+fi
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --agents|--codex)
+      install_to "$HOME/.agents/skills/$SKILL_NAME"
       shift
       ;;
-    --codex)
-      copy_skill "$HOME/.agents/skills/$SKILL_NAME"
+    --claude)
+      install_to "$HOME/.claude/skills/$SKILL_NAME"
       shift
       ;;
     --both)
-      copy_skill "$HOME/.claude/skills/$SKILL_NAME"
-      copy_skill "$HOME/.agents/skills/$SKILL_NAME"
+      install_to "$HOME/.agents/skills/$SKILL_NAME"
+      install_to "$HOME/.claude/skills/$SKILL_NAME"
       shift
       ;;
-    --project-codex)
-      [[ $# -ge 2 ]] || { echo "Missing project path" >&2; exit 2; }
-      copy_skill "$2/.agents/skills/$SKILL_NAME"
+    --project)
+      [[ $# -ge 2 ]] || { echo "Missing project path for --project" >&2; exit 2; }
+      install_to "$2/.agents/skills/$SKILL_NAME"
       shift 2
       ;;
     --project-claude)
-      [[ $# -ge 2 ]] || { echo "Missing project path" >&2; exit 2; }
-      copy_skill "$2/.claude/skills/$SKILL_NAME"
+      [[ $# -ge 2 ]] || { echo "Missing project path for --project-claude" >&2; exit 2; }
+      install_to "$2/.claude/skills/$SKILL_NAME"
       shift 2
-      ;;
-    -h|--help)
-      usage
-      exit 0
       ;;
     *)
       echo "Unknown option: $1" >&2

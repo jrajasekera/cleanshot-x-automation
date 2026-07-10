@@ -1,6 +1,0 @@
-interface:
-  display_name: "CleanShot X Automation"
-  short_description: "Control CleanShot X on local macOS via URL scheme for screenshots, OCR, annotation, pins, history, settings, and recording setup."
-  brand_color: "#0EA5E9"
-policy:
-  allow_implicit_invocation: true

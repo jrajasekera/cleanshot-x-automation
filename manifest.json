@@ -1,9 +1,0 @@
-{
-  "name": "cleanshot-x-automation",
-  "version": "1.0.0",
-  "created": "2026-07-10",
-  "description": "Agent skill for controlling CleanShot X on local macOS via URL scheme, with helper scripts for deterministic screenshot files and OCR workflows.",
-  "targets": ["Codex", "Claude Code", "Agent Skills-compatible runtimes"],
-  "requires": ["macOS GUI session", "CleanShot X", "CleanShot X API enabled"],
-  "primary_source": "https://cleanshot.com/docs-api"
-}
