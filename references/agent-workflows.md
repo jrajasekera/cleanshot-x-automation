@@ -165,13 +165,27 @@ SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.agents/skills/cleanshot-x-automation}"
 
 Use this sequence for desktop, wide-desktop, and mobile variants:
 
-1. Query `display-info` and use logical point dimensions for CleanShot coordinates.
-2. Set the browser viewport through the browser-control surface.
-3. Wait for navigation, loading indicators, responsive layout, images, and video tiles to settle. When the page exposes no reliable signal, use a short capture delay such as `--wait-ms 1200`.
-4. Move the browser-control pointer near an unused viewport edge. Moving only the macOS pointer may leave a separate automation pointer visible.
-5. Capture a complete fixed rectangle and enforce expected Retina output dimensions.
-6. Inspect the saved image for blank/loading frames, permission dialogs, stale content, cursor placement, and unexpected browser banners.
-7. Repeat for each viewport, then reset the browser viewport and restore the original page.
+1. Query `display-info`, then run `plan-exact-capture` for every requested pixel canvas.
+2. Derive responsive CSS/logical viewport dimensions separately from output pixels. A 1280-pixel phone width may be 640 CSS pixels at 2x DPR; using 1280 CSS pixels would select a desktop breakpoint.
+3. If the plan recommends `cleanshot-fixed-area`, position a complete physical rectangle and use CleanShot. If it recommends `virtual-renderer`, do not try to force the canvas through CleanShot; use the browser's supported virtual renderer and record the actual capture mechanism.
+4. Calibrate one image before the batch and enforce its exact pixel dimensions. High-level browser screenshot APIs can clip browser chrome or return a canvas smaller than the reported inner viewport; use a supported raw DevTools capture only when the browser's normal screenshot path fails calibration.
+5. Wait for navigation, loading indicators, responsive layout, images, and video tiles to settle. Prefer a concrete ready signal; when none exists, use a short delay and inspect the result.
+6. Move the browser-control pointer to a deliberate non-content location after the final click. Moving only the macOS pointer may leave a separate automation pointer visible. If the control surface always renders a pointer, leave the image unedited and note the limitation.
+7. Capture all originals before generating contact sheets or derivatives.
+8. Validate every batch with `verify-images`.
+9. Generate contact sheets only with the atomic `contact-sheet` helper, placing its output outside the source-capture directories.
+10. Inspect the saved images for blank/loading frames, permission dialogs, stale content, cursor placement, and unexpected browser banners.
+11. Repeat for each viewport, then reset browser device metrics and restore the original page.
+
+Physical-fit example:
+
+```bash
+"$SKILL_DIR/scripts/cleanshotx" plan-exact-capture \
+  --pixel-width 1280 --pixel-height 2856 \
+  --device-pixel-ratio 2 --display 1
+```
+
+If this reports `recommended_capture_path: virtual-renderer`, CleanShot can still be used to verify its own API and the physical display, but it cannot be described as the tool that produced the final off-screen image.
 
 Example for a 390 × 844 point mobile viewport on a 2× Retina display:
 
@@ -185,9 +199,23 @@ Example for a 390 × 844 point mobile viewport on a 2× Retina display:
 
 The `y` offset is environment-specific. Derive it from the current logical display bounds and the actual viewport position; do not copy the example offset blindly.
 
+After a batch:
+
+```bash
+"$SKILL_DIR/scripts/cleanshotx" verify-images \
+  --expect-pixel-width 780 --expect-pixel-height 1688 \
+  /tmp/cleanshot-agent/mobile/*.png
+
+"$SKILL_DIR/scripts/cleanshotx" contact-sheet \
+  --output /tmp/cleanshot-agent/mobile-contact.png \
+  /tmp/cleanshot-agent/mobile/*.png
+```
+
+The contact-sheet helper requires ImageMagick and deliberately refuses source/output collisions. Never place a raw montage output argument before an input list or let a QA command write back into the original capture glob.
+
 The URL API opens/restores UI state; it does not list or export history records as structured data.
 
-## 15. Use raw URL mode for future CleanShot endpoints
+## 16. Use raw URL mode for future CleanShot endpoints
 
 If CleanShot adds new URL commands before this skill is updated, use raw mode:
 
@@ -201,7 +229,7 @@ This builds and opens:
 cleanshot://new-command?key=value&other=/path/to/file
 ```
 
-## 16. Agent decision tree
+## 17. Agent decision tree
 
 1. Need a file to inspect? Use a `*-to-file` helper.
 2. Need user markup? Use `capture-* --action annotate` or `open-annotate --file`.
@@ -209,3 +237,5 @@ cleanshot://new-command?key=value&other=/path/to/file
 4. Need recording? Use `record-screen` to open/preselect mode, then explain that CleanShot’s documented API does not fully automate start/stop/save.
 5. Need cloud sharing? Use `--action upload` only when the user explicitly requests an upload.
 6. Need CleanShot settings? Use `open-settings --tab ...`.
+7. Need an exact or responsive pixel matrix? Run `plan-exact-capture` first, calibrate one output, and validate batches with `verify-images`.
+8. Need a contact sheet? Use `contact-sheet`; do not hand-roll an ImageMagick montage over source files.

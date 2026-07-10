@@ -16,6 +16,7 @@ It provides:
 - CleanShot X URL scheme API enabled (recommended): **CleanShot X Settings → Advanced → API → Allow Applications to control CleanShot**. Some CleanShot versions accept `cleanshot://` commands even with this off, but enabling it is the supported configuration.
 - macOS permissions for CleanShot X: Screen Recording, and any microphone/camera/system audio permissions needed for recording.
 - For the helper scripts: `/usr/bin/open`, `/usr/bin/osascript`, `/usr/bin/pbpaste`, `/usr/bin/sips`, and `/usr/bin/awk` are used. Swift is used by the optional `display-info` command. These are standard on Macs with the command-line developer tools installed.
+- Optional: ImageMagick's `magick` command enables the guarded `contact-sheet` QA helper.
 
 This does not work in a headless or cloud-only agent environment. The agent must be able to run shell commands on the user’s Mac.
 
@@ -87,6 +88,16 @@ Inspect logical display bounds and Retina capture scale before calculating fixed
 scripts/cleanshotx display-info
 ```
 
+Before an exact-size responsive matrix, check whether each requested pixel canvas can physically fit:
+
+```bash
+scripts/cleanshotx plan-exact-capture \
+  --pixel-width 1280 --pixel-height 2856 \
+  --device-pixel-ratio 2 --display 1
+```
+
+If the result recommends `virtual-renderer`, use the browser or app's supported off-screen rendering path rather than forcing CleanShot to clip or scale the canvas. Keep responsive CSS/logical dimensions separate from output pixels and DPR.
+
 Open CleanShot’s Advanced settings if the API still needs to be enabled:
 
 ```bash
@@ -99,6 +110,20 @@ Take a deterministic screenshot file:
 mkdir -p /tmp/cleanshot-agent
 scripts/cleanshotx capture-fullscreen-to-file --output /tmp/cleanshot-agent/fullscreen.png --timeout 30
 ```
+
+Validate a completed batch and create a guarded contact sheet:
+
+```bash
+scripts/cleanshotx verify-images \
+  --expect-pixel-width 2560 --expect-pixel-height 1440 \
+  /tmp/cleanshot-agent/monitor/*.png
+
+scripts/cleanshotx contact-sheet \
+  --output /tmp/cleanshot-agent/monitor-contact.png \
+  /tmp/cleanshot-agent/monitor/*.png
+```
+
+`contact-sheet` requires ImageMagick. It prevents its output from being one of the inputs, refuses replacement without `--force`, and publishes the result atomically so a montage error cannot overwrite source captures.
 
 Window capture and area capture without a complete rectangle are interactive. For unattended work, supply `x`, `y`, `width`, and `height` to `capture-area-to-file`. If an interactive selector times out, cancel it with Escape before starting another capture.
 
@@ -154,6 +179,8 @@ tests/test-cli.sh
 ```
 
 Set `CLEANSHOT_LIVE_TEST=1` to include a live fixed-area CleanShot capture with dimension validation.
+
+When ImageMagick is installed, the normal test suite also verifies that `contact-sheet` preserves input hashes, refuses input/output collisions, and requires `--force` before replacing an existing derivative.
 
 ## Research sources
 

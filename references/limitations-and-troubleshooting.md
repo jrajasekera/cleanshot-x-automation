@@ -90,13 +90,45 @@ If `display` is omitted, CleanShot uses the display where the cursor is located.
 
 On Retina displays, output pixel dimensions are commonly the logical rectangle multiplied by the backing scale. For example, a 400 × 300 point capture produces an 800 × 600 PNG at 2× scale. Use `--expect-pixel-width` and `--expect-pixel-height` when exact output size matters.
 
+## An exact virtual viewport is larger than the physical display
+
+Run the fit planner before capture:
+
+```bash
+scripts/cleanshotx plan-exact-capture \
+  --pixel-width 1280 --pixel-height 2856 \
+  --device-pixel-ratio 2 --display 1
+```
+
+The command converts requested output pixels to required logical points using the intended device DPR. It permits fixed CleanShot capture only when the logical canvas fits and the target DPR matches the physical display backing scale. If it recommends `virtual-renderer`, a physical CleanShot capture would clip, scale, or render the wrong pixel density. Use the browser or app's supported virtual rendering path, calibrate a single output, verify every file, and document that CleanShot did not generate the final off-screen pixels.
+
+Do not confuse output pixels with responsive CSS width. For example, a 1280-pixel phone image can represent a 640-CSS-pixel viewport at 2x DPR. Using 1280 CSS pixels may select a desktop layout.
+
 ## A cursor appears even after moving the macOS pointer
 
-Browser-control and computer-use tools may render or track their own automation pointer independently of the macOS pointer. Move that pointer through the same browser/UI-control surface after the final viewport change and before capture. CleanShot cursor inclusion also follows the user's CleanShot screenshot settings.
+Browser-control and computer-use tools may render or track their own automation pointer independently of the macOS pointer. Move that pointer through the same browser/UI-control surface after the final interaction and before capture. Put it in a deliberate non-content area; moving to a virtual viewport edge can still leave it inside the screenshot. CleanShot cursor inclusion also follows the user's CleanShot screenshot settings.
+
+Some browser surfaces always include the automation pointer. If it cannot be hidden, leave the capture unedited, place the pointer predictably, and disclose the limitation. Retouching the pointer can alter evidence and should not be the default.
 
 ## Responsive capture is blank or partially rendered
 
 Responsive apps can briefly clear or rebuild their layout after a viewport change. Wait for a concrete ready signal where possible; otherwise add `--wait-ms 1200` or a similar short delay. Validate dimensions and visually inspect every final viewport image.
+
+## Browser screenshot dimensions do not match the viewport
+
+A browser may report the requested inner viewport but its high-level screenshot API can still exclude browser UI or clip the surface. Make one calibration capture before a batch and validate it with `verify-images`. If it is wrong, use the browser's documented lower-level capture path, such as DevTools `Page.captureScreenshot`, and validate again before continuing.
+
+## Contact-sheet generation overwrote a source image
+
+Do not invoke ImageMagick montage directly over capture globs. A misplaced output argument can make the last input file become the output. Use the guarded helper:
+
+```bash
+scripts/cleanshotx contact-sheet \
+  --output /tmp/capture-contact.png \
+  /path/to/original-captures/*.png
+```
+
+The helper requires ImageMagick, refuses input/output collisions, refuses an existing output unless `--force` is explicit, supplies the macOS system font when available, writes to a temporary file, validates the result, and moves it into place atomically. Follow contact-sheet creation with `verify-images` on the original batch so derivative QA cannot silently damage the source set.
 
 ## URL encoding
 

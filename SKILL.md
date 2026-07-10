@@ -4,7 +4,7 @@ description: Control CleanShot X on a local macOS desktop via its URL scheme. Us
 compatibility: Requires macOS with a graphical login session and CleanShot X installed, with its URL scheme API enabled (Settings → Advanced → API → Allow Applications to control CleanShot). Uses /usr/bin open, osascript, pbpaste, sips, and awk; display-info additionally uses Swift. Does not work headless, over SSH without a GUI, or in cloud sandboxes.
 license: MIT
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   source: https://github.com/jrajasekera/cleanshot-x-automation
 ---
 
@@ -19,6 +19,7 @@ Run the helper from the skill directory:
 ```bash
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx status
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx display-info
+${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx plan-exact-capture --pixel-width 1280 --pixel-height 2856 --device-pixel-ratio 2 --display 1
 # Only when the URL/clipboard path is uncertain:
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx doctor --smoke-test
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx capture-fullscreen-to-file --output /tmp/cleanshot-fullscreen.png --timeout 30
@@ -47,10 +48,24 @@ scripts/cleanshotx open-settings --tab advanced
 
 1. Run `doctor --smoke-test` once when the URL/clipboard path is uncertain.
 2. Run `display-info` before calculating screen coordinates.
-3. Prefer a complete fixed rectangle for unattended captures.
-4. If the page or app was resized, navigated, or switched into a responsive viewport, wait for it to repaint before invoking CleanShot. `--wait-ms 1200` is a useful fallback when no readiness signal exists.
-5. Move both the macOS pointer and any browser-automation pointer outside the target region when clean screenshots matter.
-6. Inspect every final image. Correct dimensions do not detect blank, loading, permission-prompt, or stale frames.
+3. When exact output pixels or a responsive viewport matrix is requested, run `plan-exact-capture` for every requested size before capturing anything.
+4. If the plan reports `recommended_capture_path: cleanshot-fixed-area`, use the reported logical size and a complete fixed rectangle. If it reports `virtual-renderer`, the canvas cannot fit on the physical display: use the browser/app's supported virtual renderer and record that CleanShot did not produce the final pixels.
+5. Make one calibration capture for each capture mechanism and verify its dimensions before starting a batch. Do not assume a browser viewport setting guarantees the screenshot API's output size.
+6. If the page or app was resized, navigated, or switched into a responsive viewport, wait for it to repaint before capture. Prefer a concrete ready signal; `--wait-ms 1200` is only a fallback.
+7. Move both the macOS pointer and any browser-automation pointer to a deliberate non-content region after the final interaction. Some browser control surfaces always render their pointer; if so, place it predictably and note it instead of retouching evidence.
+8. Capture all originals before running derivative tools. Keep contact sheets and other QA artifacts outside source folders.
+9. Validate every final image with `verify-images`, then inspect every image or a safely generated contact sheet. Correct dimensions do not detect blank, loading, permission-prompt, pointer-obscured, or stale frames.
+10. Reset temporary browser viewport/device overrides and restore the original page after the batch.
+
+Example physical-fit check:
+
+```bash
+scripts/cleanshotx plan-exact-capture \
+  --pixel-width 1280 --pixel-height 2856 \
+  --device-pixel-ratio 2 --display 1
+```
+
+At DPR 2 this requires a 640 × 1428 logical-point surface. The planner permits fixed CleanShot capture only when that logical surface fits and the target DPR matches the display backing scale. If either check fails, use a virtual renderer.
 
 The wrappers call CleanShot with `action=copy`, clear the clipboard first, wait for a new image, verify that the saved file is readable, and optionally enforce pixel dimensions:
 
@@ -63,6 +78,20 @@ scripts/cleanshotx capture-area-to-file \
 ```
 
 Use absolute output paths when possible. After saving, inspect the image with the available image-reading tool. Use CleanShot OCR only when text extraction is needed or image vision is unavailable.
+
+For batch dimension validation and safe contact sheets:
+
+```bash
+scripts/cleanshotx verify-images \
+  --expect-pixel-width 2560 --expect-pixel-height 1440 \
+  /tmp/cleanshot-agent/monitor/*.png
+
+scripts/cleanshotx contact-sheet \
+  --output /tmp/cleanshot-agent/monitor-contact.png \
+  /tmp/cleanshot-agent/monitor/*.png
+```
+
+`contact-sheet` requires ImageMagick. It refuses to use an input image as its output, refuses to replace an existing output unless `--force` is explicit, handles the macOS system font path, writes to a temporary file, validates it, and only then moves it into place. Do not invoke `magick montage` through `xargs` or shell substitution for capture QA; positional mistakes can overwrite the last source image.
 
 Examples:
 
@@ -114,6 +143,8 @@ The `*-to-file` helpers clear the clipboard before capture so they can detect th
 CleanShot’s area coordinates are logical display points with `(0,0)` at the lower-left corner. `display=1` is the main display, `display=2` the secondary display, and so on. When omitted, CleanShot uses the display containing the cursor.
 
 Retina output is commonly larger than the requested rectangle: a 390 × 844 point region at 2× backing scale produces a 780 × 1688 PNG. Use `display-info` to get logical bounds and capture pixel scale; do not infer geometry from a resized app screenshot or ask Finder for desktop bounds, which can trigger an Apple Events permission prompt.
+
+Physical display pixels are not interchangeable with virtual browser pixels. A requested phone image may have a 1280 × 2856 pixel output while using a 640 × 1428 logical viewport at 2x DPR. Setting the browser to 1280 CSS pixels would produce a desktop breakpoint, while asking CleanShot for 640 × 1428 points fails when the physical display is shorter than 1428 points. Plan the logical viewport and the output pixel canvas separately.
 
 ## When to load more detail
 

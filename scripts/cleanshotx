@@ -29,6 +29,9 @@ Usage:
   cleanshotx status
   cleanshotx doctor [--smoke-test] [--output FILE] [--timeout SECONDS]
   cleanshotx display-info
+  cleanshotx plan-exact-capture --pixel-width N --pixel-height N [--device-pixel-ratio N] [--display N]
+  cleanshotx verify-images --expect-pixel-width N --expect-pixel-height N IMAGE [...]
+  cleanshotx contact-sheet --output FILE [--thumbnail GEOMETRY] [--tile GEOMETRY] [--geometry GEOMETRY] [--force] IMAGE [...]
   cleanshotx <url-command> [options]
   cleanshotx capture-fullscreen-to-file --output FILE [capture options]
   cleanshotx capture-area-to-file --output FILE [--x N --y N --width N --height N --display N] [capture options]
@@ -79,10 +82,18 @@ Capture-to-file options:
   --expect-pixel-width N         Fail if the saved PNG width differs
   --expect-pixel-height N        Fail if the saved PNG height differs
 
+Batch QA helpers:
+  plan-exact-capture             Check whether an exact pixel canvas fits a physical CleanShot display
+  verify-images                  Validate every input image and enforce one expected pixel size
+  contact-sheet                  Build a contact sheet atomically without allowing an input to be the output
+
 Examples:
   cleanshotx capture-fullscreen --action save
   cleanshotx capture-area --x 100 --y 120 --width 800 --height 600 --display 1 --action copy
   cleanshotx capture-fullscreen-to-file --output /tmp/screen.png
+  cleanshotx plan-exact-capture --pixel-width 1280 --pixel-height 2856 --device-pixel-ratio 2 --display 1
+  cleanshotx verify-images --expect-pixel-width 2560 --expect-pixel-height 1440 /tmp/captures/*.png
+  cleanshotx contact-sheet --output /tmp/contact.png /tmp/captures/*.png
   cleanshotx scrolling-capture --x 100 --y 120 --width 800 --height 600 --start true --autoscroll true
   cleanshotx record-screen --x 100 --y 120 --width 1280 --height 720 --display 1
   cleanshotx ocr-file --file /tmp/screen.png --output /tmp/screen.txt
@@ -93,6 +104,9 @@ Notes:
   - Screenshot-to-file helpers clear the clipboard before invoking CleanShot, then save the copied image.
   - Window capture and area capture without a complete rectangle are interactive; the user must select a target.
   - CleanShot coordinates are logical display points. Retina PNG dimensions are commonly 2x the requested size.
+  - A fixed CleanShot capture cannot include a virtual viewport that is larger than the physical display surface.
+  - Use plan-exact-capture before exact responsive matrices and verify-images after every batch.
+  - Use contact-sheet instead of invoking ImageMagick montage directly; it writes to a temporary file and refuses input/output collisions.
   - CleanShot's URL API opens Record Screen mode but does not document unattended start/stop/save controls.
 USAGE
 }
@@ -370,6 +384,206 @@ verify_image_file() {
   fi
 }
 
+canonical_path() {
+  local path="$1"
+  local dir base
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  [[ -d "$dir" ]] || fail "parent directory does not exist: $dir"
+  printf '%s/%s\n' "$(cd "$dir" && pwd -P)" "$base"
+}
+
+plan_exact_capture() {
+  local pixel_width=""
+  local pixel_height=""
+  local device_pixel_ratio=""
+  local display="1"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --pixel-width)
+        need_value "$1" "${2-}"
+        pixel_width="$2"
+        shift 2
+        ;;
+      --pixel-height)
+        need_value "$1" "${2-}"
+        pixel_height="$2"
+        shift 2
+        ;;
+      --display)
+        need_value "$1" "${2-}"
+        display="$2"
+        shift 2
+        ;;
+      --device-pixel-ratio|--dpr)
+        need_value "$1" "${2-}"
+        device_pixel_ratio="$2"
+        shift 2
+        ;;
+      -h|--help)
+        echo "Usage: cleanshotx plan-exact-capture --pixel-width N --pixel-height N [--device-pixel-ratio N] [--display N]"
+        return 0
+        ;;
+      *) fail "unknown plan-exact-capture option: $1" ;;
+    esac
+  done
+
+  [[ "$pixel_width" =~ ^[0-9]+$ ]] && (( pixel_width > 0 )) || fail "--pixel-width must be a positive integer"
+  [[ "$pixel_height" =~ ^[0-9]+$ ]] && (( pixel_height > 0 )) || fail "--pixel-height must be a positive integer"
+  [[ "$display" =~ ^[0-9]+$ ]] && (( display > 0 )) || fail "--display must be a positive integer"
+  if [[ -n "$device_pixel_ratio" ]]; then
+    [[ "$device_pixel_ratio" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "--device-pixel-ratio must be a positive number"
+  fi
+  is_macos || fail "plan-exact-capture requires macOS"
+  command -v swift >/dev/null 2>&1 || fail "plan-exact-capture requires the Swift command-line tool"
+  [[ -f "$DISPLAY_INFO_SCRIPT" ]] || fail "missing display helper: $DISPLAY_INFO_SCRIPT"
+  local planner_args=(
+    --plan-pixel-width "$pixel_width"
+    --plan-pixel-height "$pixel_height"
+    --display "$display"
+  )
+  if [[ -n "$device_pixel_ratio" ]]; then
+    planner_args+=(--device-pixel-ratio "$device_pixel_ratio")
+  fi
+  swift "$DISPLAY_INFO_SCRIPT" "${planner_args[@]}"
+}
+
+verify_images() {
+  local expected_width=""
+  local expected_height=""
+  local files=()
+  local file
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --expect-pixel-width)
+        need_value "$1" "${2-}"
+        expected_width="$2"
+        shift 2
+        ;;
+      --expect-pixel-height)
+        need_value "$1" "${2-}"
+        expected_height="$2"
+        shift 2
+        ;;
+      --)
+        shift
+        files+=("$@")
+        break
+        ;;
+      -h|--help)
+        echo "Usage: cleanshotx verify-images --expect-pixel-width N --expect-pixel-height N IMAGE [...]"
+        return 0
+        ;;
+      -*) fail "unknown verify-images option: $1" ;;
+      *) files+=("$1"); shift ;;
+    esac
+  done
+
+  [[ -n "$expected_width" ]] || fail "verify-images requires --expect-pixel-width N"
+  [[ -n "$expected_height" ]] || fail "verify-images requires --expect-pixel-height N"
+  (( ${#files[@]} > 0 )) || fail "verify-images requires at least one IMAGE"
+  for file in "${files[@]}"; do
+    verify_image_file "$file" "$expected_width" "$expected_height"
+    printf 'verified %sx%s %s\n' "$expected_width" "$expected_height" "$file"
+  done
+  printf 'verified %d image(s) at %sx%s\n' "${#files[@]}" "$expected_width" "$expected_height"
+}
+
+contact_sheet() {
+  local output=""
+  local thumbnail="320x"
+  local tile="4x"
+  local geometry="+8+8"
+  local force=0
+  local files=()
+  local file output_path input_path output_dir output_format temp_output
+  local font_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output|-o)
+        need_value "$1" "${2-}"
+        output="$2"
+        shift 2
+        ;;
+      --thumbnail)
+        need_value "$1" "${2-}"
+        thumbnail="$2"
+        shift 2
+        ;;
+      --tile)
+        need_value "$1" "${2-}"
+        tile="$2"
+        shift 2
+        ;;
+      --geometry)
+        need_value "$1" "${2-}"
+        geometry="$2"
+        shift 2
+        ;;
+      --force)
+        force=1
+        shift
+        ;;
+      --)
+        shift
+        files+=("$@")
+        break
+        ;;
+      -h|--help)
+        echo "Usage: cleanshotx contact-sheet --output FILE [--thumbnail GEOMETRY] [--tile GEOMETRY] [--geometry GEOMETRY] [--force] IMAGE [...]"
+        return 0
+        ;;
+      -*) fail "unknown contact-sheet option: $1" ;;
+      *) files+=("$1"); shift ;;
+    esac
+  done
+
+  [[ -n "$output" ]] || fail "contact-sheet requires --output FILE"
+  (( ${#files[@]} > 0 )) || fail "contact-sheet requires at least one IMAGE"
+  command -v magick >/dev/null 2>&1 || fail "contact-sheet requires ImageMagick's 'magick' command"
+  ensure_parent_dir "$output"
+  output_path="$(canonical_path "$output")"
+  if [[ -e "$output" && "$force" -ne 1 ]]; then
+    fail "contact-sheet output already exists; use --force to replace it: $output"
+  fi
+
+  for file in "${files[@]}"; do
+    verify_image_file "$file" "" ""
+    input_path="$(canonical_path "$file")"
+    [[ "$input_path" != "$output_path" ]] || fail "contact-sheet output must not be one of its input images: $output"
+  done
+
+  output_format="${output##*.}"
+  [[ "$output_format" != "$output" ]] || fail "contact-sheet output needs a file extension: $output"
+  output_format="$(printf '%s' "$output_format" | /usr/bin/tr '[:upper:]' '[:lower:]')"
+  case "$output_format" in
+    png|jpg|jpeg|webp) ;;
+    *) fail "unsupported contact-sheet output format: .$output_format" ;;
+  esac
+  if [[ -f /System/Library/Fonts/Helvetica.ttc ]]; then
+    font_args=(-font /System/Library/Fonts/Helvetica.ttc)
+  fi
+
+  output_dir="$(dirname "$output_path")"
+  temp_output="$(mktemp "$output_dir/.cleanshot-contact-sheet.XXXXXX")"
+  if ! magick montage "${files[@]}" \
+    "${font_args[@]+"${font_args[@]}"}" \
+    -thumbnail "$thumbnail" \
+    -tile "$tile" \
+    -geometry "$geometry" \
+    "${output_format}:$temp_output"; then
+    rm -f "$temp_output"
+    fail "ImageMagick failed while building contact sheet"
+  fi
+  verify_image_file "$temp_output" "" ""
+  if [[ "$force" -eq 1 ]]; then
+    mv -f "$temp_output" "$output"
+  else
+    mv "$temp_output" "$output"
+  fi
+  printf '%s\n' "$output"
+}
+
 wait_for_clipboard_text() {
   local output="$1"
   local timeout="$2"
@@ -476,6 +690,11 @@ status() {
   else
     echo "  unavailable  display-info support (requires Swift and $DISPLAY_INFO_SCRIPT)"
   fi
+  if command -v magick >/dev/null 2>&1; then
+    echo "  ok  contact-sheet support"
+  else
+    echo "  unavailable  contact-sheet support (optional; requires ImageMagick's magick command)"
+  fi
 
   echo "CleanShot API setting: cannot be read programmatically by this helper."
   echo "Use 'cleanshotx doctor --smoke-test' for a real URL and clipboard test."
@@ -486,7 +705,7 @@ display_info() {
   is_macos || fail "display-info requires macOS"
   command -v swift >/dev/null 2>&1 || fail "display-info requires the Swift command-line tool"
   [[ -f "$DISPLAY_INFO_SCRIPT" ]] || fail "missing display helper: $DISPLAY_INFO_SCRIPT"
-  swift "$DISPLAY_INFO_SCRIPT"
+  swift "$DISPLAY_INFO_SCRIPT" "$@"
 }
 
 doctor() {
@@ -551,7 +770,23 @@ main() {
       exit 0
       ;;
     display-info)
-      display_info
+      shift
+      display_info "$@"
+      exit 0
+      ;;
+    plan-exact-capture)
+      shift
+      plan_exact_capture "$@"
+      exit 0
+      ;;
+    verify-images)
+      shift
+      verify_images "$@"
+      exit 0
+      ;;
+    contact-sheet)
+      shift
+      contact_sheet "$@"
       exit 0
       ;;
   esac

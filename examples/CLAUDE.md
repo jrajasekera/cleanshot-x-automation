@@ -13,3 +13,5 @@ mkdir -p /tmp/cleanshot-agent
 Then view/read `/tmp/cleanshot-agent/screen.png` using available multimodal tools.
 
 Keep captures private. Avoid Cloud upload unless requested.
+
+For exact responsive matrices, run `plan-exact-capture` before capture, keep CSS/logical viewport dimensions separate from DPR-scaled output pixels, calibrate one image per capture mechanism, validate batches with `verify-images`, and use the guarded `contact-sheet` helper for derivatives. If a requested canvas does not fit the physical display, use a supported virtual renderer and report that CleanShot did not produce the final pixels.

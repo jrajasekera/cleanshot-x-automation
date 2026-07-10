@@ -27,3 +27,7 @@ With CleanShot X, recapture the previous area to /tmp/cleanshot-agent/after.png 
 ```text
 Use CleanShot X OCR on /tmp/cleanshot-agent/screen.png and save the text next to it.
 ```
+
+```text
+Use the CleanShot X skill to capture a responsive browser matrix at exact output sizes. Check whether each canvas fits the physical display first, use a virtual browser renderer when it does not, verify every image's dimensions, and create contact sheets without modifying any source screenshot.
+```

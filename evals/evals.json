@@ -18,6 +18,12 @@
       "prompt": "Take an exact 390 by 844 point CleanShot capture on my Retina Mac and fail if the saved PNG is not 780 by 1688 pixels.",
       "expected_output": "The agent uses logical point coordinates, explains Retina backing scale, and calls capture-area-to-file with a complete rectangle plus expected pixel-width and pixel-height validation.",
       "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "Capture my browser dashboard as a 1280 by 2856 phone image on a Mac whose physical capture surface is only 3420 by 2214 pixels. I need the mobile breakpoint, exact output dimensions, and a contact sheet for the batch.",
+      "expected_output": "The agent runs plan-exact-capture, separates a 640 by 1428 logical mobile viewport at 2x DPR from the requested output pixels, recognizes that fixed CleanShot capture cannot fit the height, uses a supported virtual browser renderer with a calibration capture, validates all originals with verify-images, creates the contact sheet with the guarded helper outside source folders, notes pointer/provenance limitations, and resets device overrides.",
+      "files": []
     }
   ]
 }

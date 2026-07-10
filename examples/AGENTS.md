@@ -19,3 +19,7 @@ Rules:
 - Use `ocr-file` or `ocr-area` for text extraction.
 - Treat screen recording as semi-automated. CleanShot’s documented URL API opens recording mode but does not provide start/stop/save controls.
 - If commands do nothing, ask the user to enable CleanShot X Settings → Advanced → API → Allow Applications to control CleanShot.
+- Before exact responsive captures, run `plan-exact-capture` for each requested pixel size. Use a virtual browser/app renderer when the canvas does not fit the physical display, and state which tool produced the final pixels.
+- Validate completed batches with `verify-images`.
+- Build contact sheets only with the guarded `contact-sheet` helper and keep derivatives outside source-capture folders.
+- Treat CSS/logical viewport size, DPR, and output pixels as separate values.
