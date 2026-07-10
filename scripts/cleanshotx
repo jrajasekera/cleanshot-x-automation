@@ -1,0 +1,475 @@
+#!/usr/bin/env bash
+# CleanShot X URL scheme helper for local macOS agent automation.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APPLE_CLIPBOARD_SCRIPT="$SCRIPT_DIR/clipboard-image-to-file.applescript"
+PRINT_URL=0
+DRY_RUN=0
+QUIET=0
+PARAMS=()
+
+fail() {
+  echo "cleanshotx: $*" >&2
+  exit 1
+}
+
+need_value() {
+  local opt="$1"
+  local val="${2-}"
+  [[ -n "$val" ]] || fail "missing value for $opt"
+}
+
+usage() {
+  cat <<'USAGE'
+CleanShot X helper CLI for agents.
+
+Usage:
+  cleanshotx status
+  cleanshotx <url-command> [options]
+  cleanshotx capture-fullscreen-to-file --output FILE [--timeout SECONDS]
+  cleanshotx capture-area-to-file --output FILE [--x N --y N --width N --height N --display N] [--timeout SECONDS]
+  cleanshotx capture-window-to-file --output FILE [--timeout SECONDS]
+  cleanshotx capture-previous-area-to-file --output FILE [--timeout SECONDS]
+  cleanshotx ocr-file --file IMAGE [--linebreaks true|false] [--output TEXTFILE] [--timeout SECONDS]
+  cleanshotx ocr-area [--x N --y N --width N --height N --display N] [--linebreaks true|false] [--output TEXTFILE] [--timeout SECONDS]
+  cleanshotx url COMMAND [key=value ...]
+
+Direct URL commands:
+  all-in-one
+  capture-area
+  capture-previous-area
+  capture-fullscreen
+  capture-window
+  self-timer
+  scrolling-capture
+  pin
+  record-screen
+  capture-text
+  open-annotate
+  open-from-clipboard
+  toggle-desktop-icons
+  hide-desktop-icons
+  show-desktop-icons
+  add-quick-access-overlay
+  open-history
+  restore-recently-closed
+  open-settings
+
+Common options for direct commands:
+  --x N --y N --width N --height N --display N
+  --action copy|save|annotate|upload|pin
+  --start true|false --autoscroll true|false
+  --file PATH            Maps to CleanShot's filepath parameter
+  --filepath PATH        Same as --file
+  --linebreaks true|false
+  --tab general|wallpaper|shortcuts|quickaccess|recording|screenshots|annotate|cloud|advanced|about
+  --print-url            Print the generated cleanshot:// URL to stdout
+  --dry-run, --no-open   Print URL and do not open CleanShot
+  --quiet                Suppress non-essential stderr messages
+
+Examples:
+  cleanshotx capture-fullscreen --action save
+  cleanshotx capture-area --x 100 --y 120 --width 800 --height 600 --display 1 --action copy
+  cleanshotx capture-fullscreen-to-file --output /tmp/screen.png
+  cleanshotx scrolling-capture --x 100 --y 120 --width 800 --height 600 --start true --autoscroll true
+  cleanshotx record-screen --x 100 --y 120 --width 1280 --height 720 --display 1
+  cleanshotx ocr-file --file /tmp/screen.png --output /tmp/screen.txt
+  cleanshotx open-settings --tab advanced
+
+Notes:
+  - Must run in a local macOS GUI session with CleanShot X installed and API access enabled.
+  - Screenshot-to-file helpers clear the clipboard before invoking CleanShot, then save the copied image.
+  - CleanShot's URL API opens Record Screen mode but does not document unattended start/stop/save controls.
+USAGE
+}
+
+is_macos() {
+  [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]
+}
+
+require_macos_tools() {
+  is_macos || fail "this helper must run on macOS in a GUI session"
+  command -v /usr/bin/open >/dev/null 2>&1 || fail "missing /usr/bin/open"
+  command -v /usr/bin/osascript >/dev/null 2>&1 || fail "missing /usr/bin/osascript"
+}
+
+urlencode() {
+  local raw="$1"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe="/-_.~"))' "$raw"
+  elif command -v ruby >/dev/null 2>&1; then
+    ruby -rcgi -e 'print CGI.escape(ARGV[0]).gsub("+", "%20")' "$raw"
+  else
+    # Minimal fallback for common local paths. Prefer python3 or ruby when available.
+    printf '%s' "$raw" | sed -e 's/%/%25/g' -e 's/ /%20/g' -e 's/#/%23/g' -e 's/?/%3F/g' -e 's/&/%26/g'
+  fi
+}
+
+build_url() {
+  local command_name="$1"
+  shift || true
+  local url="cleanshot://${command_name}"
+  local sep="?"
+  local pair key value encoded
+  for pair in "$@"; do
+    key="${pair%%=*}"
+    value="${pair#*=}"
+    [[ -n "$key" ]] || fail "empty query parameter in '$pair'"
+    encoded="$(urlencode "$value")"
+    url="${url}${sep}${key}=${encoded}"
+    sep="&"
+  done
+  printf '%s\n' "$url"
+}
+
+open_url() {
+  local url="$1"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    printf '%s\n' "$url"
+    return 0
+  fi
+  require_macos_tools
+  /usr/bin/open "$url"
+  if [[ "$PRINT_URL" -eq 1 ]]; then
+    printf '%s\n' "$url"
+  elif [[ "$QUIET" -ne 1 ]]; then
+    echo "opened $url" >&2
+  fi
+}
+
+launch_command() {
+  local command_name="$1"
+  shift || true
+  local url
+  url="$(build_url "$command_name" "$@")"
+  open_url "$url"
+}
+
+add_param() {
+  PARAMS+=("$1=$2")
+}
+
+has_param_key() {
+  local wanted="$1"
+  local pair key
+  for pair in "${PARAMS[@]}"; do
+    key="${pair%%=*}"
+    [[ "$key" == "$wanted" ]] && return 0
+  done
+  return 1
+}
+
+parse_direct_options() {
+  PARAMS=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --x|--y|--width|--height|--display|--action|--start|--autoscroll|--linebreaks|--tab)
+        need_value "$1" "${2-}"
+        add_param "${1#--}" "$2"
+        shift 2
+        ;;
+      --file|--filepath)
+        need_value "$1" "${2-}"
+        add_param "filepath" "$2"
+        shift 2
+        ;;
+      --print-url)
+        PRINT_URL=1
+        shift
+        ;;
+      --dry-run|--no-open)
+        DRY_RUN=1
+        shift
+        ;;
+      --quiet)
+        QUIET=1
+        shift
+        ;;
+      *=*)
+        PARAMS+=("$1")
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        fail "unknown option: $1"
+        ;;
+    esac
+  done
+}
+
+parse_output_timeout_and_params() {
+  PARAMS=()
+  OUTPUT=""
+  TIMEOUT="60"
+  LINEBREAKS=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --output|-o)
+        need_value "$1" "${2-}"
+        OUTPUT="$2"
+        shift 2
+        ;;
+      --timeout)
+        need_value "$1" "${2-}"
+        TIMEOUT="$2"
+        shift 2
+        ;;
+      --x|--y|--width|--height|--display|--start|--autoscroll|--tab)
+        need_value "$1" "${2-}"
+        add_param "${1#--}" "$2"
+        shift 2
+        ;;
+      --linebreaks)
+        need_value "$1" "${2-}"
+        LINEBREAKS="$2"
+        add_param "linebreaks" "$2"
+        shift 2
+        ;;
+      --file|--filepath)
+        need_value "$1" "${2-}"
+        add_param "filepath" "$2"
+        shift 2
+        ;;
+      --print-url)
+        PRINT_URL=1
+        shift
+        ;;
+      --dry-run|--no-open)
+        DRY_RUN=1
+        shift
+        ;;
+      --quiet)
+        QUIET=1
+        shift
+        ;;
+      *=*)
+        PARAMS+=("$1")
+        shift
+        ;;
+      *)
+        fail "unknown option: $1"
+        ;;
+    esac
+  done
+}
+
+clear_clipboard() {
+  require_macos_tools
+  /usr/bin/osascript -e 'set the clipboard to ""' >/dev/null
+}
+
+ensure_parent_dir() {
+  local file="$1"
+  local dir
+  dir="$(dirname "$file")"
+  mkdir -p "$dir"
+}
+
+wait_for_clipboard_image() {
+  local output="$1"
+  local timeout="$2"
+  local start elapsed errfile
+  [[ -n "$output" ]] || fail "missing --output FILE"
+  [[ "$timeout" =~ ^[0-9]+$ ]] || fail "--timeout must be an integer number of seconds"
+  [[ -f "$APPLE_CLIPBOARD_SCRIPT" ]] || fail "missing AppleScript helper: $APPLE_CLIPBOARD_SCRIPT"
+  ensure_parent_dir "$output"
+  errfile="$(mktemp -t cleanshotx-clipboard-image.XXXXXX)"
+  start=$SECONDS
+  while true; do
+    if /usr/bin/osascript "$APPLE_CLIPBOARD_SCRIPT" "$output" >/dev/null 2>"$errfile"; then
+      rm -f "$errfile"
+      printf '%s\n' "$output"
+      return 0
+    fi
+    elapsed=$((SECONDS - start))
+    if (( elapsed >= timeout )); then
+      echo "Timed out waiting for CleanShot to copy an image to the clipboard." >&2
+      echo "Last clipboard error:" >&2
+      sed 's/^/  /' "$errfile" >&2 || true
+      rm -f "$errfile"
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+wait_for_clipboard_text() {
+  local output="$1"
+  local timeout="$2"
+  local start elapsed text
+  [[ "$timeout" =~ ^[0-9]+$ ]] || fail "--timeout must be an integer number of seconds"
+  command -v /usr/bin/pbpaste >/dev/null 2>&1 || fail "missing /usr/bin/pbpaste"
+  start=$SECONDS
+  while true; do
+    text="$(/usr/bin/pbpaste 2>/dev/null || true)"
+    if [[ -n "$text" ]]; then
+      if [[ -n "$output" ]]; then
+        ensure_parent_dir "$output"
+        printf '%s' "$text" > "$output"
+        printf '%s\n' "$output"
+      else
+        printf '%s\n' "$text"
+      fi
+      return 0
+    fi
+    elapsed=$((SECONDS - start))
+    if (( elapsed >= timeout )); then
+      fail "timed out waiting for OCR text on the clipboard"
+    fi
+    sleep 0.5
+  done
+}
+
+capture_to_file() {
+  local clean_command="$1"
+  shift || true
+  parse_output_timeout_and_params "$@"
+  [[ -n "$OUTPUT" ]] || fail "missing --output FILE"
+  if [[ "$DRY_RUN" -ne 1 ]]; then
+    clear_clipboard
+  fi
+  PARAMS+=("action=copy")
+  launch_command "$clean_command" "${PARAMS[@]}"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+  wait_for_clipboard_image "$OUTPUT" "$TIMEOUT"
+}
+
+ocr_to_text() {
+  local mode="$1"
+  shift || true
+  parse_output_timeout_and_params "$@"
+  if [[ "$mode" == "file" ]] && ! has_param_key "filepath"; then
+    fail "ocr-file requires --file IMAGE"
+  fi
+  if [[ "$DRY_RUN" -ne 1 ]]; then
+    clear_clipboard
+  fi
+  launch_command "capture-text" "${PARAMS[@]}"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    return 0
+  fi
+  wait_for_clipboard_text "$OUTPUT" "$TIMEOUT"
+}
+
+status() {
+  if ! is_macos; then
+    echo "macOS: no ($(uname -s 2>/dev/null || echo unknown))"
+    echo "This helper must run on the user's local Mac GUI session."
+    exit 1
+  fi
+
+  echo "macOS: yes"
+  if /usr/bin/osascript -e 'id of application "CleanShot X"' >/tmp/cleanshotx-app-id.$$ 2>/tmp/cleanshotx-app-id-err.$$; then
+    echo "CleanShot X app id: $(cat /tmp/cleanshotx-app-id.$$)"
+  else
+    echo "CleanShot X app id: not found via AppleScript"
+  fi
+  rm -f /tmp/cleanshotx-app-id.$$ /tmp/cleanshotx-app-id-err.$$
+
+  echo "Required tools:"
+  for tool in /usr/bin/open /usr/bin/osascript /usr/bin/pbpaste /usr/bin/sips; do
+    if [[ -x "$tool" ]]; then
+      echo "  ok  $tool"
+    else
+      echo "  missing  $tool"
+    fi
+  done
+
+  echo "CleanShot API setting: cannot be read programmatically by this helper."
+  echo "Enable it in CleanShot X Settings > Advanced > API > Allow Applications to control CleanShot."
+  echo "Open that pane with: cleanshotx open-settings --tab advanced"
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    usage
+    exit 2
+  fi
+
+  case "$1" in
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    status|doctor)
+      status
+      exit 0
+      ;;
+  esac
+
+  local cmd="$1"
+  shift || true
+
+  case "$cmd" in
+    url)
+      [[ $# -ge 1 ]] || fail "url requires COMMAND [key=value ...]"
+      local command_name="$1"
+      shift || true
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --print-url) PRINT_URL=1; shift ;;
+          --dry-run|--no-open) DRY_RUN=1; shift ;;
+          --quiet) QUIET=1; shift ;;
+          *=*) PARAMS+=("$1"); shift ;;
+          *) fail "url parameters must be key=value pairs; got '$1'" ;;
+        esac
+      done
+      launch_command "$command_name" "${PARAMS[@]}"
+      ;;
+
+    capture-fullscreen-to-file)
+      capture_to_file "capture-fullscreen" "$@"
+      ;;
+    capture-area-to-file)
+      capture_to_file "capture-area" "$@"
+      ;;
+    capture-window-to-file)
+      capture_to_file "capture-window" "$@"
+      ;;
+    capture-previous-area-to-file)
+      capture_to_file "capture-previous-area" "$@"
+      ;;
+    ocr-file)
+      ocr_to_text "file" "$@"
+      ;;
+    ocr-area)
+      ocr_to_text "area" "$@"
+      ;;
+    settings)
+      parse_direct_options "$@"
+      launch_command "open-settings" "${PARAMS[@]}"
+      ;;
+    annotate)
+      parse_direct_options "$@"
+      launch_command "open-annotate" "${PARAMS[@]}"
+      ;;
+    quick-access)
+      parse_direct_options "$@"
+      launch_command "add-quick-access-overlay" "${PARAMS[@]}"
+      ;;
+    desktop-icons)
+      [[ $# -ge 1 ]] || fail "desktop-icons requires hide, show, or toggle"
+      case "$1" in
+        hide) launch_command "hide-desktop-icons" ;;
+        show) launch_command "show-desktop-icons" ;;
+        toggle) launch_command "toggle-desktop-icons" ;;
+        *) fail "desktop-icons requires hide, show, or toggle" ;;
+      esac
+      ;;
+    all-in-one|capture-area|capture-previous-area|capture-fullscreen|capture-window|self-timer|scrolling-capture|pin|record-screen|capture-text|open-annotate|open-from-clipboard|toggle-desktop-icons|hide-desktop-icons|show-desktop-icons|add-quick-access-overlay|open-history|restore-recently-closed|open-settings)
+      parse_direct_options "$@"
+      launch_command "$cmd" "${PARAMS[@]}"
+      ;;
+    *)
+      fail "unknown command: $cmd (run 'cleanshotx --help')"
+      ;;
+  esac
+}
+
+main "$@"
