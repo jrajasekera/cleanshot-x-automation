@@ -129,7 +129,7 @@ Version notes: command requires 3.5.1 or later; `action` requires 4.7 or later.
 
 Command: `/capture-window`
 
-Purpose: Open Capture Window mode.
+Purpose: Open interactive Capture Window mode. The command does not choose a window itself; the user or a UI-driving tool must click one.
 
 Parameters:
 
@@ -139,8 +139,10 @@ Examples:
 
 ```bash
 scripts/cleanshotx capture-window --action annotate
-scripts/cleanshotx capture-window-to-file --output /tmp/window.png
+scripts/cleanshotx capture-window-interactive-to-file --output /tmp/window.png --timeout 120
 ```
+
+If the selection is not completed before the helper timeout, press Escape to cancel the still-visible selector before starting another capture.
 
 Version notes: command requires 3.5.1 or later; `action` requires 4.7 or later.
 

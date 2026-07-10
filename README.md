@@ -15,7 +15,7 @@ It provides:
 - CleanShot X installed.
 - CleanShot X URL scheme API enabled (recommended): **CleanShot X Settings → Advanced → API → Allow Applications to control CleanShot**. Some CleanShot versions accept `cleanshot://` commands even with this off, but enabling it is the supported configuration.
 - macOS permissions for CleanShot X: Screen Recording, and any microphone/camera/system audio permissions needed for recording.
-- For the helper scripts: `/usr/bin/open`, `/usr/bin/osascript`, `/usr/bin/pbpaste`, and `/usr/bin/sips` are used. These are standard macOS tools.
+- For the helper scripts: `/usr/bin/open`, `/usr/bin/osascript`, `/usr/bin/pbpaste`, `/usr/bin/sips`, and `/usr/bin/awk` are used. Swift is used by the optional `display-info` command. These are standard on Macs with the command-line developer tools installed.
 
 This does not work in a headless or cloud-only agent environment. The agent must be able to run shell commands on the user’s Mac.
 
@@ -74,9 +74,17 @@ checkout, so `git pull` updates it in place.
 ## Smoke test
 
 ```bash
-~/.claude/skills/cleanshot-x-automation/scripts/cleanshotx status
+~/.claude/skills/cleanshot-x-automation/scripts/cleanshotx doctor --smoke-test
 # or
-~/.agents/skills/cleanshot-x-automation/scripts/cleanshotx status
+~/.agents/skills/cleanshot-x-automation/scripts/cleanshotx doctor --smoke-test
+```
+
+This performs a real unattended 32 × 32 point capture and verifies the URL scheme, clipboard handoff, and output file without retaining the temporary image. `status` only checks the static environment.
+
+Inspect logical display bounds and Retina capture scale before calculating fixed rectangles:
+
+```bash
+scripts/cleanshotx display-info
 ```
 
 Open CleanShot’s Advanced settings if the API still needs to be enabled:
@@ -91,6 +99,8 @@ Take a deterministic screenshot file:
 mkdir -p /tmp/cleanshot-agent
 scripts/cleanshotx capture-fullscreen-to-file --output /tmp/cleanshot-agent/fullscreen.png --timeout 30
 ```
+
+Window capture and area capture without a complete rectangle are interactive. For unattended work, supply `x`, `y`, `width`, and `height` to `capture-area-to-file`. If an interactive selector times out, cancel it with Escape before starting another capture.
 
 OCR an image:
 
@@ -121,16 +131,29 @@ cleanshot-x-automation/
 ├── install.sh        # optional convenience installer
 ├── scripts/
 │   ├── cleanshotx
-│   └── clipboard-image-to-file.applescript
+│   ├── clipboard-image-to-file.applescript
+│   └── display-info.swift
 ├── references/
 │   ├── cleanshot-url-api.md
 │   ├── agent-workflows.md
 │   └── limitations-and-troubleshooting.md
-└── examples/
-    ├── AGENTS.md
-    ├── CLAUDE.md
-    └── prompts.md
+├── examples/
+│   ├── AGENTS.md
+│   ├── CLAUDE.md
+│   └── prompts.md
+├── evals/
+│   └── evals.json
+└── tests/
+    └── test-cli.sh
 ```
+
+## Tests
+
+```bash
+tests/test-cli.sh
+```
+
+Set `CLEANSHOT_LIVE_TEST=1` to include a live fixed-area CleanShot capture with dimension validation.
 
 ## Research sources
 

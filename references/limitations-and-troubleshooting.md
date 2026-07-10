@@ -9,10 +9,11 @@ Likely causes:
 3. The command is being run from a non-macOS environment or headless session.
 4. macOS privacy permissions are missing.
 
-Run:
+First cancel any visible area/window selector with Escape. Then run a real unattended test:
 
 ```bash
 scripts/cleanshotx status
+scripts/cleanshotx doctor --smoke-test
 scripts/cleanshotx open-settings --tab advanced
 ```
 
@@ -22,6 +23,12 @@ Then enable:
 CleanShot X Settings → Advanced → API → Allow Applications to control CleanShot
 ```
 
+A `capture-window-to-file` timeout is not an API test: window capture is interactive and will wait until a window is selected. A clipboard timeout only means that no new image arrived; it does not identify the cause by itself.
+
+## A later fixed capture does nothing after a timeout
+
+An interactive selector from an earlier area or window capture may still be active. Press Escape to cancel it before retrying. Use `doctor --smoke-test` to confirm unattended capture separately.
+
 ## `capture-*-to-file` saves the wrong/stale image
 
 The helper clears the clipboard before invoking CleanShot, which should prevent stale image capture. If this still happens:
@@ -30,6 +37,8 @@ The helper clears the clipboard before invoking CleanShot, which should prevent 
 - Make sure the user completed interactive selection after the command started.
 - Check that CleanShot’s `action=copy` is not overridden by an app preset.
 - Use fixed rectangle parameters for non-interactive captures.
+- Wait for the target application to repaint after navigation or viewport changes.
+- Inspect the final image; successful file and dimension checks cannot identify a blank or loading frame.
 
 ## The agent cannot see the screenshot file
 
@@ -70,12 +79,24 @@ This uses `action=copy` and saves from the clipboard.
 
 ## Coordinates are off
 
-CleanShot coordinates use lower-left origin, not upper-left. Also confirm the display index:
+Run `scripts/cleanshotx display-info` instead of inferring display geometry from an app screenshot or asking Finder for desktop bounds. Finder automation can trigger an unrelated Apple Events permission prompt.
+
+CleanShot coordinates are logical display points and use lower-left origin, not upper-left. Also confirm the display index:
 
 - `display=1`: main display
 - `display=2`: secondary display
 
 If `display` is omitted, CleanShot uses the display where the cursor is located.
+
+On Retina displays, output pixel dimensions are commonly the logical rectangle multiplied by the backing scale. For example, a 400 × 300 point capture produces an 800 × 600 PNG at 2× scale. Use `--expect-pixel-width` and `--expect-pixel-height` when exact output size matters.
+
+## A cursor appears even after moving the macOS pointer
+
+Browser-control and computer-use tools may render or track their own automation pointer independently of the macOS pointer. Move that pointer through the same browser/UI-control surface after the final viewport change and before capture. CleanShot cursor inclusion also follows the user's CleanShot screenshot settings.
+
+## Responsive capture is blank or partially rendered
+
+Responsive apps can briefly clear or rebuild their layout after a viewport change. Wait for a concrete ready signal where possible; otherwise add `--wait-ms 1200` or a similar short delay. Validate dimensions and visually inspect every final viewport image.
 
 ## URL encoding
 

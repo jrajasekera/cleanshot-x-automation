@@ -1,0 +1,23 @@
+{
+  "skill_name": "cleanshot-x-automation",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Use CleanShot X to capture the active browser dashboard at desktop, wide desktop, and mobile sizes. Save each image under docs/screenshots and do the work unattended.",
+      "expected_output": "The agent distinguishes interactive from unattended commands, obtains display geometry, uses complete fixed rectangles, waits for responsive repainting, moves the automation pointer, validates output dimensions, inspects final images, and restores the browser viewport.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "capture-window-to-file timed out and the next fixed-area screenshot did nothing. Is the CleanShot API disabled? Diagnose it without changing my settings.",
+      "expected_output": "The agent explains that window capture is interactive, cancels any pending selector, avoids treating a clipboard timeout as proof of an API problem, and uses doctor --smoke-test for an unattended end-to-end check.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Take an exact 390 by 844 point CleanShot capture on my Retina Mac and fail if the saved PNG is not 780 by 1688 pixels.",
+      "expected_output": "The agent uses logical point coordinates, explains Retina backing scale, and calls capture-area-to-file with a complete rectangle plus expected pixel-width and pixel-height validation.",
+      "files": []
+    }
+  ]
+}

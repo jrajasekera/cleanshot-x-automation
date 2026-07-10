@@ -1,10 +1,10 @@
 ---
 name: cleanshot-x-automation
 description: Control CleanShot X on a local macOS desktop via its URL scheme. Use for taking fullscreen/area/window screenshots, saving captures to files through a clipboard helper, opening screen recording mode, running OCR, annotating/pinning images, adding Quick Access Overlay items, opening history/settings, and toggling desktop icons when the user wants an agent to capture or inspect the Mac screen with CleanShot X.
-compatibility: Requires macOS with a graphical login session and CleanShot X installed, with its URL scheme API enabled (Settings → Advanced → API → Allow Applications to control CleanShot). Uses /usr/bin open, osascript, pbpaste, and sips. Does not work headless, over SSH without a GUI, or in cloud sandboxes.
+compatibility: Requires macOS with a graphical login session and CleanShot X installed, with its URL scheme API enabled (Settings → Advanced → API → Allow Applications to control CleanShot). Uses /usr/bin open, osascript, pbpaste, sips, and awk; display-info additionally uses Swift. Does not work headless, over SSH without a GUI, or in cloud sandboxes.
 license: MIT
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   source: https://github.com/jrajasekera/cleanshot-x-automation
 ---
 
@@ -12,12 +12,15 @@ metadata:
 
 Use this skill only when running on the user's local macOS graphical session where CleanShot X is installed. It will not work in a headless Linux container, remote cloud sandbox, or SSH session without GUI access.
 
-## First choice: bundled helper CLI
+## Start with the bundled helper
 
 Run the helper from the skill directory:
 
 ```bash
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx status
+${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx display-info
+# Only when the URL/clipboard path is uncertain:
+${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx doctor --smoke-test
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx capture-fullscreen-to-file --output /tmp/cleanshot-fullscreen.png --timeout 30
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx capture-area-to-file --x 100 --y 120 --width 800 --height 600 --display 1 --output /tmp/cleanshot-area.png --timeout 30
 ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx ocr-file --file /tmp/cleanshot-area.png --output /tmp/cleanshot-area.txt --timeout 30
@@ -25,26 +28,49 @@ ${CLAUDE_SKILL_DIR:-.}/scripts/cleanshotx ocr-file --file /tmp/cleanshot-area.pn
 
 For Codex, replace `${CLAUDE_SKILL_DIR:-.}` with the installed skill path, usually `~/.agents/skills/cleanshot-x-automation` or the repository path `.agents/skills/cleanshot-x-automation`.
 
-If the helper fails with “API disabled” symptoms, open CleanShot settings and instruct the user to enable **Settings → Advanced → API → Allow Applications to control CleanShot**:
+`status` checks the static environment. `doctor --smoke-test` performs a small unattended fixed-area capture and verifies the URL-scheme-to-clipboard-to-file path without retaining the temporary image. A clipboard timeout alone does not prove that the API setting is disabled.
+
+If the smoke test fails after any visible selector has been cancelled, open CleanShot settings and confirm **Settings → Advanced → API → Allow Applications to control CleanShot**:
 
 ```bash
 scripts/cleanshotx open-settings --tab advanced
 ```
 
+## Choose unattended or interactive capture deliberately
+
+- `capture-fullscreen-to-file`, `capture-previous-area-to-file`, and `capture-area-to-file` with all of `x`, `y`, `width`, and `height` are unattended.
+- `capture-window-to-file` always opens a selector and requires the user or a UI-driving tool to click a window.
+- `capture-area-to-file` without a complete rectangle also requires a visible selection.
+- Prefer fixed rectangles for unattended agent workflows. If an interactive capture times out, press Escape to cancel its selector before issuing another capture.
+
 ## Core workflow for screenshots the agent must inspect
 
-1. Prefer `capture-fullscreen-to-file`, `capture-area-to-file`, `capture-window-to-file`, or `capture-previous-area-to-file`.
-2. These wrappers call CleanShot with `action=copy`, clear the clipboard first, wait for the new image, then save it to the requested output file using AppleScript.
-3. After a file is created, inspect that image using the agent’s available image-reading tool. Use CleanShot OCR only when text extraction is needed or image vision is unavailable.
-4. Use absolute output paths when possible. Good default: `/tmp/cleanshot-agent/<purpose>.png`.
+1. Run `doctor --smoke-test` once when the URL/clipboard path is uncertain.
+2. Run `display-info` before calculating screen coordinates.
+3. Prefer a complete fixed rectangle for unattended captures.
+4. If the page or app was resized, navigated, or switched into a responsive viewport, wait for it to repaint before invoking CleanShot. `--wait-ms 1200` is a useful fallback when no readiness signal exists.
+5. Move both the macOS pointer and any browser-automation pointer outside the target region when clean screenshots matter.
+6. Inspect every final image. Correct dimensions do not detect blank, loading, permission-prompt, or stale frames.
+
+The wrappers call CleanShot with `action=copy`, clear the clipboard first, wait for a new image, verify that the saved file is readable, and optionally enforce pixel dimensions:
+
+```bash
+scripts/cleanshotx capture-area-to-file \
+  --x 0 --y 0 --width 390 --height 844 --display 1 \
+  --wait-ms 1200 \
+  --expect-pixel-width 780 --expect-pixel-height 1688 \
+  --output /tmp/cleanshot-agent/mobile.png
+```
+
+Use absolute output paths when possible. After saving, inspect the image with the available image-reading tool. Use CleanShot OCR only when text extraction is needed or image vision is unavailable.
 
 Examples:
 
 ```bash
 mkdir -p /tmp/cleanshot-agent
 scripts/cleanshotx capture-fullscreen-to-file --output /tmp/cleanshot-agent/screen.png
-scripts/cleanshotx capture-window-to-file --output /tmp/cleanshot-agent/window.png
 scripts/cleanshotx capture-area-to-file --x 0 --y 0 --width 1440 --height 900 --display 1 --output /tmp/cleanshot-agent/area.png
+scripts/cleanshotx capture-window-interactive-to-file --output /tmp/cleanshot-agent/window.png --timeout 120
 ```
 
 ## Direct CleanShot URL commands
@@ -85,7 +111,9 @@ The `*-to-file` helpers clear the clipboard before capture so they can detect th
 
 ## Coordinates
 
-CleanShot’s area coordinates use point `(0,0)` at the lower-left corner of the screen. `display=1` is the main display, `display=2` the secondary display, etc. When no display is specified, CleanShot uses the display containing the cursor.
+CleanShot’s area coordinates are logical display points with `(0,0)` at the lower-left corner. `display=1` is the main display, `display=2` the secondary display, and so on. When omitted, CleanShot uses the display containing the cursor.
+
+Retina output is commonly larger than the requested rectangle: a 390 × 844 point region at 2× backing scale produces a 780 × 1688 PNG. Use `display-info` to get logical bounds and capture pixel scale; do not infer geometry from a resized app screenshot or ask Finder for desktop bounds, which can trigger an Apple Events permission prompt.
 
 ## When to load more detail
 

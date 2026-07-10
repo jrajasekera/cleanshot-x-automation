@@ -4,6 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPLE_CLIPBOARD_SCRIPT="$SCRIPT_DIR/clipboard-image-to-file.applescript"
+DISPLAY_INFO_SCRIPT="$SCRIPT_DIR/display-info.swift"
 PRINT_URL=0
 DRY_RUN=0
 QUIET=0
@@ -26,10 +27,14 @@ CleanShot X helper CLI for agents.
 
 Usage:
   cleanshotx status
+  cleanshotx doctor [--smoke-test] [--output FILE] [--timeout SECONDS]
+  cleanshotx display-info
   cleanshotx <url-command> [options]
-  cleanshotx capture-fullscreen-to-file --output FILE [--timeout SECONDS]
-  cleanshotx capture-area-to-file --output FILE [--x N --y N --width N --height N --display N] [--timeout SECONDS]
-  cleanshotx capture-window-to-file --output FILE [--timeout SECONDS]
+  cleanshotx capture-fullscreen-to-file --output FILE [capture options]
+  cleanshotx capture-area-to-file --output FILE [--x N --y N --width N --height N --display N] [capture options]
+  cleanshotx capture-area-interactive-to-file --output FILE [capture options]
+  cleanshotx capture-window-to-file --output FILE [capture options]
+  cleanshotx capture-window-interactive-to-file --output FILE [capture options]
   cleanshotx capture-previous-area-to-file --output FILE [--timeout SECONDS]
   cleanshotx ocr-file --file IMAGE [--linebreaks true|false] [--output TEXTFILE] [--timeout SECONDS]
   cleanshotx ocr-area [--x N --y N --width N --height N --display N] [--linebreaks true|false] [--output TEXTFILE] [--timeout SECONDS]
@@ -68,6 +73,12 @@ Common options for direct commands:
   --dry-run, --no-open   Print URL and do not open CleanShot
   --quiet                Suppress non-essential stderr messages
 
+Capture-to-file options:
+  --timeout SECONDS              Clipboard wait timeout (default: 60)
+  --wait-ms MILLISECONDS         Wait before asking CleanShot to capture
+  --expect-pixel-width N         Fail if the saved PNG width differs
+  --expect-pixel-height N        Fail if the saved PNG height differs
+
 Examples:
   cleanshotx capture-fullscreen --action save
   cleanshotx capture-area --x 100 --y 120 --width 800 --height 600 --display 1 --action copy
@@ -80,6 +91,8 @@ Examples:
 Notes:
   - Must run in a local macOS GUI session with CleanShot X installed and API access enabled.
   - Screenshot-to-file helpers clear the clipboard before invoking CleanShot, then save the copied image.
+  - Window capture and area capture without a complete rectangle are interactive; the user must select a target.
+  - CleanShot coordinates are logical display points. Retina PNG dimensions are commonly 2x the requested size.
   - CleanShot's URL API opens Record Screen mode but does not document unattended start/stop/save controls.
 USAGE
 }
@@ -205,6 +218,9 @@ parse_output_timeout_and_params() {
   PARAMS=()
   OUTPUT=""
   TIMEOUT="60"
+  WAIT_MS="0"
+  EXPECT_PIXEL_WIDTH=""
+  EXPECT_PIXEL_HEIGHT=""
   LINEBREAKS=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -216,6 +232,21 @@ parse_output_timeout_and_params() {
       --timeout)
         need_value "$1" "${2-}"
         TIMEOUT="$2"
+        shift 2
+        ;;
+      --wait-ms)
+        need_value "$1" "${2-}"
+        WAIT_MS="$2"
+        shift 2
+        ;;
+      --expect-pixel-width)
+        need_value "$1" "${2-}"
+        EXPECT_PIXEL_WIDTH="$2"
+        shift 2
+        ;;
+      --expect-pixel-height)
+        need_value "$1" "${2-}"
+        EXPECT_PIXEL_HEIGHT="$2"
         shift 2
         ;;
       --x|--y|--width|--height|--display|--start|--autoscroll|--tab)
@@ -272,6 +303,7 @@ ensure_parent_dir() {
 wait_for_clipboard_image() {
   local output="$1"
   local timeout="$2"
+  local interaction="$3"
   local start elapsed errfile
   [[ -n "$output" ]] || fail "missing --output FILE"
   [[ "$timeout" =~ ^[0-9]+$ ]] || fail "--timeout must be an integer number of seconds"
@@ -282,12 +314,18 @@ wait_for_clipboard_image() {
   while true; do
     if /usr/bin/osascript "$APPLE_CLIPBOARD_SCRIPT" "$output" >/dev/null 2>"$errfile"; then
       rm -f "$errfile"
-      printf '%s\n' "$output"
       return 0
     fi
     elapsed=$((SECONDS - start))
     if (( elapsed >= timeout )); then
       echo "Timed out waiting for CleanShot to copy an image to the clipboard." >&2
+      echo "This timeout alone does not prove that CleanShot's URL API is disabled." >&2
+      if [[ "$interaction" == "interactive" ]]; then
+        echo "This command requires a visible selection. Complete it, or press Escape to cancel before retrying." >&2
+      else
+        echo "If an earlier interactive selector is still open, press Escape before retrying." >&2
+        echo "Run 'cleanshotx doctor --smoke-test' to test the URL and clipboard path end to end." >&2
+      fi
       echo "Last clipboard error:" >&2
       sed 's/^/  /' "$errfile" >&2 || true
       rm -f "$errfile"
@@ -295,6 +333,41 @@ wait_for_clipboard_image() {
     fi
     sleep 0.5
   done
+}
+
+wait_before_capture() {
+  local wait_ms="$1"
+  local seconds millis delay
+  [[ "$wait_ms" =~ ^[0-9]+$ ]] || fail "--wait-ms must be a non-negative integer"
+  (( wait_ms > 0 )) || return 0
+  seconds=$((wait_ms / 1000))
+  millis=$((wait_ms % 1000))
+  printf -v delay '%d.%03d' "$seconds" "$millis"
+  sleep "$delay"
+}
+
+verify_image_file() {
+  local output="$1"
+  local expected_width="$2"
+  local expected_height="$3"
+  local metadata pixel_width pixel_height
+  [[ -s "$output" ]] || fail "capture did not create a non-empty image: $output"
+  command -v /usr/bin/sips >/dev/null 2>&1 || fail "missing /usr/bin/sips"
+  metadata="$(/usr/bin/sips -g pixelWidth -g pixelHeight "$output" 2>/dev/null)" || fail "saved file is not a readable image: $output"
+  pixel_width="$(printf '%s\n' "$metadata" | /usr/bin/awk '/pixelWidth:/ {print $2; exit}')"
+  pixel_height="$(printf '%s\n' "$metadata" | /usr/bin/awk '/pixelHeight:/ {print $2; exit}')"
+  [[ "$pixel_width" =~ ^[0-9]+$ && "$pixel_height" =~ ^[0-9]+$ ]] || fail "could not read image dimensions: $output"
+
+  if [[ -n "$expected_width" ]]; then
+    [[ "$expected_width" =~ ^[0-9]+$ ]] || fail "--expect-pixel-width must be a positive integer"
+    (( expected_width > 0 )) || fail "--expect-pixel-width must be a positive integer"
+    [[ "$pixel_width" == "$expected_width" ]] || fail "expected image width $expected_width px, got $pixel_width px: $output"
+  fi
+  if [[ -n "$expected_height" ]]; then
+    [[ "$expected_height" =~ ^[0-9]+$ ]] || fail "--expect-pixel-height must be a positive integer"
+    (( expected_height > 0 )) || fail "--expect-pixel-height must be a positive integer"
+    [[ "$pixel_height" == "$expected_height" ]] || fail "expected image height $expected_height px, got $pixel_height px: $output"
+  fi
 }
 
 wait_for_clipboard_text() {
@@ -326,18 +399,35 @@ wait_for_clipboard_text() {
 
 capture_to_file() {
   local clean_command="$1"
-  shift || true
+  local interaction="$2"
+  shift 2 || true
   parse_output_timeout_and_params "$@"
   [[ -n "$OUTPUT" ]] || fail "missing --output FILE"
+  [[ "$TIMEOUT" =~ ^[0-9]+$ ]] || fail "--timeout must be an integer number of seconds"
+  [[ "$WAIT_MS" =~ ^[0-9]+$ ]] || fail "--wait-ms must be a non-negative integer"
+
+  if [[ "$interaction" == "auto" ]]; then
+    if has_param_key x && has_param_key y && has_param_key width && has_param_key height; then
+      interaction="unattended"
+    else
+      interaction="interactive"
+    fi
+  fi
+  if [[ "$interaction" == "interactive" && "$QUIET" -ne 1 ]]; then
+    echo "Interactive CleanShot capture: select the requested target in the visible CleanShot UI." >&2
+  fi
   if [[ "$DRY_RUN" -ne 1 ]]; then
     clear_clipboard
+    wait_before_capture "$WAIT_MS"
   fi
   PARAMS+=("action=copy")
   launch_command "$clean_command" "${PARAMS[@]+"${PARAMS[@]}"}"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
-  wait_for_clipboard_image "$OUTPUT" "$TIMEOUT"
+  wait_for_clipboard_image "$OUTPUT" "$TIMEOUT" "$interaction"
+  verify_image_file "$OUTPUT" "$EXPECT_PIXEL_WIDTH" "$EXPECT_PIXEL_HEIGHT"
+  printf '%s\n' "$OUTPUT"
 }
 
 ocr_to_text() {
@@ -373,7 +463,7 @@ status() {
   rm -f /tmp/cleanshotx-app-id.$$ /tmp/cleanshotx-app-id-err.$$
 
   echo "Required tools:"
-  for tool in /usr/bin/open /usr/bin/osascript /usr/bin/pbpaste /usr/bin/sips; do
+  for tool in /usr/bin/open /usr/bin/osascript /usr/bin/pbpaste /usr/bin/sips /usr/bin/awk; do
     if [[ -x "$tool" ]]; then
       echo "  ok  $tool"
     else
@@ -381,9 +471,63 @@ status() {
     fi
   done
 
+  if command -v swift >/dev/null 2>&1 && [[ -f "$DISPLAY_INFO_SCRIPT" ]]; then
+    echo "  ok  display-info support"
+  else
+    echo "  unavailable  display-info support (requires Swift and $DISPLAY_INFO_SCRIPT)"
+  fi
+
   echo "CleanShot API setting: cannot be read programmatically by this helper."
-  echo "Enable it in CleanShot X Settings > Advanced > API > Allow Applications to control CleanShot."
-  echo "Open that pane with: cleanshotx open-settings --tab advanced"
+  echo "Use 'cleanshotx doctor --smoke-test' for a real URL and clipboard test."
+  echo "Open the API setting with: cleanshotx open-settings --tab advanced"
+}
+
+display_info() {
+  is_macos || fail "display-info requires macOS"
+  command -v swift >/dev/null 2>&1 || fail "display-info requires the Swift command-line tool"
+  [[ -f "$DISPLAY_INFO_SCRIPT" ]] || fail "missing display helper: $DISPLAY_INFO_SCRIPT"
+  swift "$DISPLAY_INFO_SCRIPT"
+}
+
+doctor() {
+  local smoke_test=0
+  local output=""
+  local timeout="15"
+  local temp_dir=""
+  local temp_dir_escaped=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --smoke-test) smoke_test=1; shift ;;
+      --output|-o) need_value "$1" "${2-}"; output="$2"; shift 2 ;;
+      --timeout) need_value "$1" "${2-}"; timeout="$2"; shift 2 ;;
+      -h|--help)
+        echo "Usage: cleanshotx doctor [--smoke-test] [--output FILE] [--timeout SECONDS]"
+        return 0
+        ;;
+      *) fail "unknown doctor option: $1" ;;
+    esac
+  done
+
+  status
+  (( smoke_test == 1 )) || return 0
+  [[ "$timeout" =~ ^[0-9]+$ ]] || fail "--timeout must be an integer number of seconds"
+  if [[ -z "$output" ]]; then
+    temp_dir="$(mktemp -d -t cleanshotx-doctor.XXXXXX)"
+    output="$temp_dir/smoke-test.png"
+    printf -v temp_dir_escaped '%q' "$temp_dir"
+    trap "rm -rf $temp_dir_escaped" EXIT
+  fi
+  echo "Running non-interactive 32x32-point smoke test; the clipboard will be cleared."
+  capture_to_file "capture-area" "unattended" \
+    --x 0 --y 0 --width 32 --height 32 --display 1 \
+    --output "$output" --timeout "$timeout"
+  if [[ -n "$temp_dir" ]]; then
+    rm -rf "$temp_dir"
+    trap - EXIT
+    echo "Smoke test passed; temporary image removed."
+  else
+    echo "Smoke test passed: $output"
+  fi
 }
 
 main() {
@@ -397,8 +541,17 @@ main() {
       usage
       exit 0
       ;;
-    status|doctor)
+    status)
       status
+      exit 0
+      ;;
+    doctor)
+      shift
+      doctor "$@"
+      exit 0
+      ;;
+    display-info)
+      display_info
       exit 0
       ;;
   esac
@@ -424,16 +577,22 @@ main() {
       ;;
 
     capture-fullscreen-to-file)
-      capture_to_file "capture-fullscreen" "$@"
+      capture_to_file "capture-fullscreen" "unattended" "$@"
       ;;
     capture-area-to-file)
-      capture_to_file "capture-area" "$@"
+      capture_to_file "capture-area" "auto" "$@"
+      ;;
+    capture-area-interactive-to-file)
+      capture_to_file "capture-area" "interactive" "$@"
       ;;
     capture-window-to-file)
-      capture_to_file "capture-window" "$@"
+      capture_to_file "capture-window" "interactive" "$@"
+      ;;
+    capture-window-interactive-to-file)
+      capture_to_file "capture-window" "interactive" "$@"
       ;;
     capture-previous-area-to-file)
-      capture_to_file "capture-previous-area" "$@"
+      capture_to_file "capture-previous-area" "unattended" "$@"
       ;;
     ocr-file)
       ocr_to_text "file" "$@"

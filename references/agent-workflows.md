@@ -2,6 +2,17 @@
 
 Use these recipes from Codex, Claude Code, or any agent that can run local shell commands on the user’s Mac.
 
+## Before the first unattended capture
+
+Use the smoke test when the URL scheme or clipboard handoff has not been verified in the current environment:
+
+```bash
+"$SKILL_DIR/scripts/cleanshotx" doctor --smoke-test
+"$SKILL_DIR/scripts/cleanshotx" display-info
+```
+
+The smoke test uses a small fixed rectangle and is unattended. Do not use window capture as a connectivity test because it opens a selector and waits for a user click.
+
 ## 1. Inspect the current screen
 
 ```bash
@@ -48,8 +59,10 @@ This opens CleanShot’s area selector. The helper waits until the user complete
 ```bash
 SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.agents/skills/cleanshot-x-automation}"
 mkdir -p /tmp/cleanshot-agent
-"$SKILL_DIR/scripts/cleanshotx" capture-window-to-file --output /tmp/cleanshot-agent/window.png --timeout 120
+"$SKILL_DIR/scripts/cleanshotx" capture-window-interactive-to-file --output /tmp/cleanshot-agent/window.png --timeout 120
 ```
+
+This is interactive. Tell the user that CleanShot is waiting for a window selection. If it times out, cancel the selector with Escape before issuing another capture command.
 
 ## 5. Re-capture the last CleanShot area
 
@@ -147,6 +160,30 @@ SKILL_DIR="${CLAUDE_SKILL_DIR:-$HOME/.agents/skills/cleanshot-x-automation}"
 "$SKILL_DIR/scripts/cleanshotx" open-history
 "$SKILL_DIR/scripts/cleanshotx" restore-recently-closed
 ```
+
+## 15. Capture a responsive browser viewport matrix
+
+Use this sequence for desktop, wide-desktop, and mobile variants:
+
+1. Query `display-info` and use logical point dimensions for CleanShot coordinates.
+2. Set the browser viewport through the browser-control surface.
+3. Wait for navigation, loading indicators, responsive layout, images, and video tiles to settle. When the page exposes no reliable signal, use a short capture delay such as `--wait-ms 1200`.
+4. Move the browser-control pointer near an unused viewport edge. Moving only the macOS pointer may leave a separate automation pointer visible.
+5. Capture a complete fixed rectangle and enforce expected Retina output dimensions.
+6. Inspect the saved image for blank/loading frames, permission dialogs, stale content, cursor placement, and unexpected browser banners.
+7. Repeat for each viewport, then reset the browser viewport and restore the original page.
+
+Example for a 390 × 844 point mobile viewport on a 2× Retina display:
+
+```bash
+"$SKILL_DIR/scripts/cleanshotx" capture-area-to-file \
+  --x 0 --y 64 --width 390 --height 844 --display 1 \
+  --wait-ms 1200 \
+  --expect-pixel-width 780 --expect-pixel-height 1688 \
+  --output /tmp/cleanshot-agent/mobile.png
+```
+
+The `y` offset is environment-specific. Derive it from the current logical display bounds and the actual viewport position; do not copy the example offset blindly.
 
 The URL API opens/restores UI state; it does not list or export history records as structured data.
 

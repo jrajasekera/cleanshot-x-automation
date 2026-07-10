@@ -71,6 +71,8 @@ install_to() {
     rm -rf "$dest/.git" "$dest/.serena"
   fi
   chmod +x "$dest/scripts/cleanshotx" 2>/dev/null || true
+  chmod +x "$dest/scripts/display-info.swift" 2>/dev/null || true
+  chmod +x "$dest/tests/test-cli.sh" 2>/dev/null || true
   echo "Copied  $dest"
 }
 
