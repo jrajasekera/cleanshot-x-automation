@@ -46,6 +46,8 @@ Use absolute paths in a directory the agent can access, such as `/tmp/cleanshot-
 
 Some agent environments are sandboxed. The command must run on the Mac host, not inside a container without GUI/clipboard access.
 
+Note a difference between the two capture mechanisms. CleanShot's `*-to-file` helpers run on the host shell and can write anywhere the shell can, so `/tmp/cleanshot-agent/...` works for them. A **browser-automation MCP** screenshot (Chrome DevTools, Playwright) often sandboxes writes to the configured *workspace roots*, and a `/tmp`, `/private/tmp`, or session-scratchpad path is rejected with `not within any of the configured workspace roots`. For those, save inside a workspace/project directory, verify, then move or delete the file. Do not assume one output path works for both mechanisms.
+
 ## OCR times out
 
 OCR through CleanShot returns text via clipboard behavior. If the result is empty, the helper waits and eventually times out.
@@ -101,6 +103,15 @@ scripts/cleanshotx plan-exact-capture \
 ```
 
 The command converts requested output pixels to required logical points using the intended device DPR. It permits fixed CleanShot capture only when the logical canvas fits and the target DPR matches the physical display backing scale. If it recommends `virtual-renderer`, a physical CleanShot capture would clip, scale, or render the wrong pixel density. Use the browser or app's supported virtual rendering path, calibrate a single output, verify every file, and document that CleanShot did not generate the final off-screen pixels.
+
+Concrete browser-MCP recipe (see the SKILL's **Virtual-renderer path** section for the full checklist):
+
+1. Compute the CSS viewport: `css_width = pixel_width / dpr`, `css_height = pixel_height / dpr` (the planner reports these as `required_logical_width` / `required_logical_height`).
+2. Emulate that viewport at the target DPR, e.g. Chrome DevTools `emulate` with `viewport: "<css_width>x<css_height>x<dpr>,mobile,touch"`.
+3. Wait for a concrete ready signal, then capture the viewport (not `fullPage` unless a scroll capture was asked for).
+4. Verify dimensions with `sips` or `verify-images` and inspect the frame.
+
+Save the browser screenshot inside a workspace/project root, not `/tmp` or a scratchpad — browser-automation MCP servers commonly reject non-workspace paths. See "The agent cannot see the screenshot file" above.
 
 Do not confuse output pixels with responsive CSS width. For example, a 1280-pixel phone image can represent a 640-CSS-pixel viewport at 2x DPR. Using 1280 CSS pixels may select a desktop layout.
 

@@ -4,7 +4,7 @@ description: Control CleanShot X on a local macOS desktop via its URL scheme. Us
 compatibility: Requires macOS with a graphical login session and CleanShot X installed, with its URL scheme API enabled (Settings → Advanced → API → Allow Applications to control CleanShot). Uses /usr/bin open, osascript, pbpaste, sips, and awk; display-info additionally uses Swift. Does not work headless, over SSH without a GUI, or in cloud sandboxes.
 license: MIT
 metadata:
-  version: "1.2.0"
+  version: "1.3.0"
   source: https://github.com/jrajasekera/cleanshot-x-automation
 ---
 
@@ -49,7 +49,7 @@ scripts/cleanshotx open-settings --tab advanced
 1. Run `doctor --smoke-test` once when the URL/clipboard path is uncertain.
 2. Run `display-info` before calculating screen coordinates.
 3. When exact output pixels or a responsive viewport matrix is requested, run `plan-exact-capture` for every requested size before capturing anything.
-4. If the plan reports `recommended_capture_path: cleanshot-fixed-area`, use the reported logical size and a complete fixed rectangle. If it reports `virtual-renderer`, the canvas cannot fit on the physical display: use the browser/app's supported virtual renderer and record that CleanShot did not produce the final pixels.
+4. If the plan reports `recommended_capture_path: cleanshot-fixed-area`, use the reported logical size and a complete fixed rectangle. If it reports `virtual-renderer`, the canvas cannot fit on the physical display: follow the **Virtual-renderer path** section below (concrete emulation recipe and the workspace-root save-path caveat) and record that CleanShot did not produce the final pixels.
 5. Make one calibration capture for each capture mechanism and verify its dimensions before starting a batch. Do not assume a browser viewport setting guarantees the screenshot API's output size.
 6. If the page or app was resized, navigated, or switched into a responsive viewport, wait for it to repaint before capture. Prefer a concrete ready signal; `--wait-ms 1200` is only a fallback.
 7. Move both the macOS pointer and any browser-automation pointer to a deliberate non-content region after the final interaction. Some browser control surfaces always render their pointer; if so, place it predictably and note it instead of retouching evidence.
@@ -101,6 +101,20 @@ scripts/cleanshotx capture-fullscreen-to-file --output /tmp/cleanshot-agent/scre
 scripts/cleanshotx capture-area-to-file --x 0 --y 0 --width 1440 --height 900 --display 1 --output /tmp/cleanshot-agent/area.png
 scripts/cleanshotx capture-window-interactive-to-file --output /tmp/cleanshot-agent/window.png --timeout 120
 ```
+
+## Virtual-renderer path (when plan-exact-capture recommends it)
+
+When `plan-exact-capture` returns `recommended_capture_path: virtual-renderer`, the target logical canvas is taller or wider than the physical display, so a CleanShot fixed-area capture would clip or downscale it. This is expected, not a failure — do not try to force CleanShot. Render off-screen through the browser or app's own device-emulation path; CleanShot will not produce the final pixels. Tall mobile viewports (e.g. 1280 × 2856 at DPR 2, needing 1428 logical points) routinely exceed a laptop display and land here.
+
+Concrete recipe with a browser-automation MCP (Chrome DevTools, Playwright, etc.):
+
+1. Convert output pixels to a CSS viewport: `css_width = pixel_width / dpr`, `css_height = pixel_height / dpr`. The planner already reports these as `required_logical_width` / `required_logical_height`. Emulating the *pixel* width instead selects a desktop layout.
+2. Emulate that viewport at the target DPR — e.g. Chrome DevTools `emulate` with `viewport: "<css_width>x<css_height>x<dpr>,mobile,touch"`.
+3. Navigate, authenticate, and wait for a concrete ready signal before capturing so you do not shoot a blank or login frame.
+4. Capture the **viewport** (not `fullPage`, unless a full-page scroll capture was requested). The output is `css × dpr` = the requested pixels.
+5. Verify with `sips -g pixelWidth -g pixelHeight <file>` or `scripts/cleanshotx verify-images --expect-pixel-width <w> --expect-pixel-height <h> <file>`, then inspect the image for blank, loading, or stale frames.
+
+**Save-path caveat:** many browser-automation MCP servers sandbox file writes to the configured *workspace roots*. A `/tmp`, `/private/tmp`, or session-scratchpad output path is rejected (`not within any of the configured workspace roots`). Save the browser screenshot inside a workspace/project directory, verify it, then move or delete it afterward. CleanShot's own `*-to-file` helpers run on the host shell and are **not** subject to this — `/tmp/cleanshot-agent/...` is fine for them, but a browser MCP screenshot usually is not, so do not assume a `/tmp` path will work for both mechanisms.
 
 ## Direct CleanShot URL commands
 
