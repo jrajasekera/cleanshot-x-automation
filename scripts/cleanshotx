@@ -153,7 +153,7 @@ add_param() {
 has_param_key() {
   local wanted="$1"
   local pair key
-  for pair in "${PARAMS[@]}"; do
+  for pair in "${PARAMS[@]+"${PARAMS[@]}"}"; do
     key="${pair%%=*}"
     [[ "$key" == "$wanted" ]] && return 0
   done
@@ -333,7 +333,7 @@ capture_to_file() {
     clear_clipboard
   fi
   PARAMS+=("action=copy")
-  launch_command "$clean_command" "${PARAMS[@]}"
+  launch_command "$clean_command" "${PARAMS[@]+"${PARAMS[@]}"}"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
@@ -350,7 +350,7 @@ ocr_to_text() {
   if [[ "$DRY_RUN" -ne 1 ]]; then
     clear_clipboard
   fi
-  launch_command "capture-text" "${PARAMS[@]}"
+  launch_command "capture-text" "${PARAMS[@]+"${PARAMS[@]}"}"
   if [[ "$DRY_RUN" -eq 1 ]]; then
     return 0
   fi
@@ -420,7 +420,7 @@ main() {
           *) fail "url parameters must be key=value pairs; got '$1'" ;;
         esac
       done
-      launch_command "$command_name" "${PARAMS[@]}"
+      launch_command "$command_name" "${PARAMS[@]+"${PARAMS[@]}"}"
       ;;
 
     capture-fullscreen-to-file)
@@ -443,15 +443,15 @@ main() {
       ;;
     settings)
       parse_direct_options "$@"
-      launch_command "open-settings" "${PARAMS[@]}"
+      launch_command "open-settings" "${PARAMS[@]+"${PARAMS[@]}"}"
       ;;
     annotate)
       parse_direct_options "$@"
-      launch_command "open-annotate" "${PARAMS[@]}"
+      launch_command "open-annotate" "${PARAMS[@]+"${PARAMS[@]}"}"
       ;;
     quick-access)
       parse_direct_options "$@"
-      launch_command "add-quick-access-overlay" "${PARAMS[@]}"
+      launch_command "add-quick-access-overlay" "${PARAMS[@]+"${PARAMS[@]}"}"
       ;;
     desktop-icons)
       [[ $# -ge 1 ]] || fail "desktop-icons requires hide, show, or toggle"
@@ -464,7 +464,7 @@ main() {
       ;;
     all-in-one|capture-area|capture-previous-area|capture-fullscreen|capture-window|self-timer|scrolling-capture|pin|record-screen|capture-text|open-annotate|open-from-clipboard|toggle-desktop-icons|hide-desktop-icons|show-desktop-icons|add-quick-access-overlay|open-history|restore-recently-closed|open-settings)
       parse_direct_options "$@"
-      launch_command "$cmd" "${PARAMS[@]}"
+      launch_command "$cmd" "${PARAMS[@]+"${PARAMS[@]}"}"
       ;;
     *)
       fail "unknown command: $cmd (run 'cleanshotx --help')"
